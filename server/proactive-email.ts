@@ -9,7 +9,7 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { handleUserMessage } from "./interaction-agent.js";
-import { sendImessage } from "./sendblue.js";
+import { sendMessage } from "./telegram.js";
 import { ensureTrigger, getComposio, listConnectedToolkits } from "./composio.js";
 import { ensureWebhookSubscription } from "./composio-webhook.js";
 import { describeUserNow } from "./timezone-config.js";
@@ -273,52 +273,28 @@ async function recallPreferenceLines(): Promise<string[]> {
   }
 }
 
-// Bring whatever the user put in BOOP_USER_PHONE to E.164 (+1XXXXXXXXXX).
-// Without this, a bare 10-digit number in env produces an `sms:NNNNNNNNNN`
-// conversation that doesn't match the `sms:+1NNNNNNNNNN` ID Sendblue uses
-// for inbound messages from the same person — proactive notices end up in
-// a parallel Convex conversation invisible to the user-driven thread.
-function normalizeProactivePhone(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  if (trimmed.startsWith("+")) return trimmed;
-  if (/^\d{10}$/.test(trimmed)) return `+1${trimmed}`;
-  if (/^\d{11,15}$/.test(trimmed)) return `+${trimmed}`;
-  return null;
-}
 
 async function dispatchProactiveNotice(summary: string): Promise<void> {
-  const raw = process.env.BOOP_USER_PHONE;
-  if (!raw) {
-    console.warn("[proactive] BOOP_USER_PHONE not set; skipping dispatch");
+  const chatId = process.env.BOOP_USER_CHAT_ID;
+  if (!chatId) {
+    console.warn("[proactive] BOOP_USER_CHAT_ID not set; skipping dispatch");
     return;
   }
-  const phone = normalizeProactivePhone(raw);
-  if (!phone) {
-    console.warn(
-      `[proactive] BOOP_USER_PHONE=${JSON.stringify(raw)} doesn't look like a valid phone number; skipping dispatch`,
-    );
-    return;
-  }
-  const conversationId = `sms:${phone}`;
+  const conversationId = `telegram:${chatId}`;
   const reply = await handleUserMessage({
     conversationId,
     content: `[proactive notice] ${summary}`,
     kind: "proactive",
   });
-  // handleUserMessage only sends iMessage from inside send_ack; the final
-  // reply is the caller's responsibility.
   if (reply && reply !== "(no reply)") {
-    await sendImessage(phone, reply);
+    await sendMessage(chatId, reply);
     await convex.mutation(api.messages.send, {
       conversationId,
       role: "assistant",
       content: reply,
     });
   } else {
-    // IA stayed silent — fall back to the raw classifier summary so the
-    // user still gets the notice; otherwise classification was a no-op.
-    await sendImessage(phone, summary);
+    await sendMessage(chatId, summary);
     await convex.mutation(api.messages.send, {
       conversationId,
       role: "assistant",
@@ -347,9 +323,9 @@ export async function ensureProactiveWatcher(publicUrl: string): Promise<void> {
     console.warn("[proactive] COMPOSIO_API_KEY not set; skipping watcher setup");
     return;
   }
-  if (!process.env.BOOP_USER_PHONE) {
+  if (!process.env.BOOP_USER_CHAT_ID) {
     console.warn(
-      "[proactive] BOOP_USER_PHONE not set; webhook will register but notices won't dispatch",
+      "[proactive] BOOP_USER_CHAT_ID not set; webhook will register but notices won't dispatch",
     );
   }
   try {
