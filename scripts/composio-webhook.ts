@@ -1,8 +1,7 @@
 // Auto-register the Composio webhook subscription + per-Gmail-account
 // trigger instances with the current public URL. Invoked from
-// `scripts/dev.mjs` once an ngrok tunnel is up. Mirrors the Sendblue
-// auto-register flow so the user doesn't have to touch the Composio
-// dashboard on every restart.
+// `scripts/dev.mjs` when a stable PUBLIC_URL is configured, so the user
+// doesn't have to touch the Composio dashboard on every restart.
 //
 // Usage: tsx scripts/composio-webhook.ts <publicUrl>
 import "../server/env-setup.js";
