@@ -4,7 +4,7 @@ import cors from "cors";
 import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import { addClient } from "./broadcast.js";
-import { createSendblueRouter } from "./sendblue.js";
+import { startTelegramPoller, stopTelegramPoller } from "./telegram.js";
 import { handleUserMessage } from "./interaction-agent.js";
 import { loadIntegrations } from "./integrations/registry.js";
 import { startCleanupLoop } from "./memory/clean.js";
@@ -52,7 +52,6 @@ async function main() {
     res.json({ ok: true, service: "boop-agent" });
   });
 
-  app.use("/sendblue", createSendblueRouter());
   app.use("/composio", createComposioRouter());
   app.use("/memory", createMemoryRouter());
 
@@ -111,10 +110,20 @@ async function main() {
     console.log(`boop-agent server listening on :${port}`);
     console.log(`  health      GET  http://localhost:${port}/health`);
     console.log(`  chat        POST http://localhost:${port}/chat`);
-    console.log(`  sendblue    POST http://localhost:${port}/sendblue/webhook`);
+    console.log(`  telegram    polling (long-poll getUpdates)`);
     console.log(`  websocket   WS   ws://localhost:${port}/ws`);
+    startTelegramPoller();
   });
 }
+
+process.on("SIGINT", () => {
+  stopTelegramPoller();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  stopTelegramPoller();
+  process.exit(0);
+});
 
 main().catch((err) => {
   console.error("fatal", err);
