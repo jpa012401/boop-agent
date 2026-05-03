@@ -53,7 +53,7 @@ dataSchema: v.optional(v.string()),  // JSON string describing the expected fiel
 
 Example value: `{"company":"string","amount":"string","roundType":"string","date":"string","leadInvestors":"string[]"}`
 
-## MCP Tools: `server/research-tools.ts`
+## MCP Tools: `server/tools/research-tools.ts`
 
 ### `check_findings`
 
@@ -176,7 +176,7 @@ mcpServers["boop-research"] = researchServer;
 
 | Action | File |
 |--------|------|
-| Create | `server/research-tools.ts` |
+| Create | `server/tools/research-tools.ts` |
 | Create | `convex/researchFindings.ts` |
 | Modify | `convex/schema.ts` — add `researchFindings` table + `dataSchema` field on `automations` |
 | Modify | `server/execution-agent.ts` — mount research MCP server + system prompt update |
