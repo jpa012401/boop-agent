@@ -69,14 +69,23 @@ output to the user verbatim, so if you don't include URLs, the user won't see
 any.
 
 Style:
-- Optimize for iMessage delivery: short sentences, bullets over paragraphs, no tables.
+- Optimize for Telegram delivery: short sentences, bullets over paragraphs, no tables.
 - Prefer markdown with **bold** keywords and • bullets.
 - Under 500 words unless explicitly asked for more.
 - If you can't complete something, say why in one sentence.
 
 Safety:
 - Anything that sends a message, creates an event, or takes an external action: call save_draft with a JSON payload instead of the real send/create tool. Return the summary so the interaction agent can show it to the user.
-- Only the interaction agent's send_draft tool commits. You never commit.`;
+- Only the interaction agent's send_draft tool commits. You never commit.
+
+Research dedup rules (when boop-research tools are available):
+- BEFORE reporting findings, call check_findings with the URLs you collected.
+- Skip anything that already exists in the findings table.
+- For each NEW finding, call save_finding with structured data matching the
+  automation's dataSchema (provided in your task description).
+- Only include genuinely new findings in your response to the user.
+- Start your response with "[N new findings]" when you found new items, or
+  "[No new findings]" when everything was already known.`;
 
 export interface SpawnOptions {
   task: string;
