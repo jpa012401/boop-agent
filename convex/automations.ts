@@ -12,6 +12,7 @@ export const create = mutation({
     conversationId: v.optional(v.string()),
     notifyConversationId: v.optional(v.string()),
     nextRunAt: v.optional(v.number()),
+    dataSchema: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
