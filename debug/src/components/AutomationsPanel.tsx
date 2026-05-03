@@ -261,7 +261,7 @@ function AutomationDetail({
           onClick={async () => {
             setRunning(true);
             try {
-              await fetch(`/automations/${auto.automationId}/run`, { method: "POST" });
+              await fetch(`/api/automations/${auto.automationId}/run`, { method: "POST" });
             } catch {
               /* ignore */
             }
