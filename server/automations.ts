@@ -36,7 +36,7 @@ export function validateSchedule(
   }
 }
 
-async function runAutomation(a: {
+export async function runAutomation(a: {
   automationId: string;
   name: string;
   task: string;

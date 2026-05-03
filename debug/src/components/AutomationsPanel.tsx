@@ -181,6 +181,7 @@ function AutomationDetail({
   const runs = useQuery(api.automations.recentRuns, { automationId, limit: 30 });
   const setEnabled = useMutation(api.automations.setEnabled);
   const remove = useMutation(api.automations.remove);
+  const [running, setRunning] = useState(false);
 
   const mutedText = isDark ? "text-slate-500" : "text-slate-400";
 
@@ -254,6 +255,28 @@ function AutomationDetail({
         <span className={`text-xs ml-auto mono ${mutedText}`}>
           {formatSchedule(auto.schedule)}
         </span>
+
+        <button
+          disabled={running}
+          onClick={async () => {
+            setRunning(true);
+            try {
+              await fetch(`/automations/${auto.automationId}/run`, { method: "POST" });
+            } catch {
+              /* ignore */
+            }
+            setTimeout(() => setRunning(false), 3000);
+          }}
+          className={`text-[11px] px-2 py-0.5 rounded transition-colors ${
+            running
+              ? "text-slate-500 cursor-not-allowed"
+              : isDark
+                ? "text-emerald-400 hover:text-emerald-300 bg-emerald-400/10 hover:bg-emerald-400/20"
+                : "text-emerald-600 hover:text-emerald-500 bg-emerald-50 hover:bg-emerald-100"
+          }`}
+        >
+          {running ? "Running…" : "▶ Run Now"}
+        </button>
 
         <button
           onClick={() => {
