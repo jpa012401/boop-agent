@@ -8,7 +8,7 @@ boop-agent is a small distributed system disguised as a single-server app. Four 
 ┌────────────────────────────────────────────────────────────────┐
 │                      EXPRESS + WS SERVER                        │
 │                                                                 │
-│   POST /sendblue/webhook   ──────►  Interaction Agent           │
+│   Telegram getUpdates      ──────►  Interaction Agent           │
 │   POST /chat                        (dispatcher, streams)       │
 │   WS /ws                                  │                     │
 │                                           │ spawn_agent         │
@@ -37,7 +37,7 @@ The front door. One instance per user turn. Its job is to **decide**, not to do.
   - `boop-memory.write_memory(content, segment, importance, tier?)` — persist a durable fact.
   - `boop-spawn.spawn_agent(task, integrations[], name?)` — kick off an execution agent.
 - Its system prompt drills the DISPATCHER rule: answer directly for chit-chat, spawn an agent for real work.
-- Replies stream through Sendblue back to iMessage (markdown stripped, chunked to 2900 chars).
+- Replies stream through the Telegram Bot API back to Telegram (chunked to 4096 chars).
 
 ### 2. Execution agent — `server/execution-agent.ts`
 
@@ -45,7 +45,7 @@ Spawned per task. Ephemeral. One instance, one job, one result.
 
 - Gets the specific `task` the interaction agent wrote (not the raw user message).
 - Loads **only** the integrations named in the spawn call.
-- System prompt drills: iMessage-friendly output, draft-before-send for any external action.
+- System prompt drills: Telegram-friendly output, draft-before-send for any external action.
 - Logs every `tool_use`, `tool_result`, and text block to Convex so the debug dashboard can replay it.
 - Runs with `permissionMode: bypassPermissions` — the interaction agent is the gatekeeper.
 - Returns a string. That string becomes a tool-result back to the interaction agent, which rewrites it in its own voice.
@@ -81,7 +81,7 @@ How it runs:
 - **`server/automations.ts`** starts a 30-second poll (`startAutomationLoop`) when the server boots.
 - On each tick it loads enabled automations from Convex, finds ones whose `nextRunAt` is ≤ now, and fires each one in parallel.
 - Firing = `spawnExecutionAgent({ task, integrations, conversationId, name: "auto:..." })` — the same sub-agent system the interaction agent uses.
-- The result is written as an `automationRun` row, and (if `notifyConversationId` points at an `sms:+...` conversation) pushed back out via Sendblue so the user sees it in iMessage.
+- The result is written as an `automationRun` row, and (if `notifyConversationId` points at a `telegram:{chat_id}` conversation) pushed back out via `sendMessage` so the user sees it in Telegram.
 - `nextRunAt` is recomputed with `croner` and stored.
 
 The four MCP tools exposed to the interaction agent (`server/automation-tools.ts`):
@@ -164,7 +164,7 @@ Seven tables. Read `convex/schema.ts` for the exact shape.
 
 | Table | Role | Key fields |
 |---|---|---|
-| `messages` | iMessage + chat transcript | conversationId, role, content, turnId |
+| `messages` | Telegram + chat transcript | conversationId, role, content, turnId |
 | `conversations` | Per-thread metadata | conversationId, messageCount, lastActivityAt |
 | `memoryRecords` | The memory store | memoryId, content, tier, segment, importance, decayRate, accessCount, lifecycle, supersedes |
 | `executionAgents` | One row per spawned agent | agentId, task, status, tokens, cost |
@@ -173,7 +173,7 @@ Seven tables. Read `convex/schema.ts` for the exact shape.
 | `automationRuns` | One row per automation run | runId, automationId, status, result, agentId |
 | `drafts` | Staged external actions | draftId, kind, summary, payload, status |
 | `consolidationRuns` | History of consolidation passes | runId, proposalsCount, mergedCount, prunedCount |
-| `sendblueDedup` | Webhook dedup by `message_handle` | handle, claimedAt |
+| `telegramOffset` | Long-poll offset tracking | offset, updatedAt |
 | `memoryEvents` | Append-only event log for the debug UI | eventType, conversationId, memoryId, data |
 | `settings` | Runtime overrides (model, etc.) read by `server/runtime-config.ts` | key, value, updatedAt |
 
@@ -185,17 +185,17 @@ Indexes are tight — search through the schema to see what's supported.
 
 ## Message lifecycle
 
-Following a text from iMessage to reply, step by step:
+Following a message from Telegram to reply, step by step:
 
 ```
-1.  Sendblue POST /sendblue/webhook
-2.  sendblue.ts:  dedup + spawn handleUserMessage()
+1.  Telegram getUpdates (long-poll)
+2.  telegram.ts:  offset tracking + spawn handleUserMessage()
 3.  interaction-agent:  save user msg, fetch recent history
 4.  interaction-agent:  query Claude with memory + spawn tools
      ↳ may call recall / write_memory
      ↳ may call spawn_agent → execution-agent runs, returns text
 5.  interaction-agent:  final text → broadcast + return
-6.  sendblue.ts:  sendImessage() chunks + sends
+6.  telegram.ts:  sendMessage() chunks + sends
 7.  interaction-agent:  save assistant msg to Convex
 8.  BACKGROUND: extract.ts pulls durable facts, writes memories
 9.  LATER: clean.ts decays scores, archives or prunes
