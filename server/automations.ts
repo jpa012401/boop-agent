@@ -2,7 +2,7 @@ import { Cron } from "croner";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { spawnExecutionAgent } from "./execution-agent.js";
-import { sendImessage } from "./sendblue.js";
+import { sendMessage } from "./telegram.js";
 import { broadcast } from "./broadcast.js";
 import { getUserTimezone } from "./timezone-config.js";
 
@@ -68,10 +68,10 @@ async function runAutomation(a: {
     });
 
     if (a.notifyConversationId && res.result) {
-      if (a.notifyConversationId.startsWith("sms:")) {
-        const number = a.notifyConversationId.slice(4);
+      if (a.notifyConversationId.startsWith("telegram:")) {
+        const chatId = a.notifyConversationId.slice("telegram:".length);
         const preamble = `[${a.name}]\n\n`;
-        await sendImessage(number, preamble + res.result);
+        await sendMessage(chatId, preamble + res.result);
       }
       await convex.mutation(api.messages.send, {
         conversationId: a.notifyConversationId,

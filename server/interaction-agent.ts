@@ -10,10 +10,10 @@ import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
 import { getRuntimeModel } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
-import { sendImessage } from "./sendblue.js";
+import { sendMessage } from "./telegram.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 
-const INTERACTION_SYSTEM = `You are Boop, a personal agent the user texts from iMessage.
+const INTERACTION_SYSTEM = `You are Boop, a personal agent the user messages on Telegram.
 
 You are a DISPATCHER, not a doer. Your job:
 1. Understand what the user wants.
@@ -222,9 +222,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           // IA calls send_ack here on a proactive turn, the user would get
           // two iMessages (the ack + the final reply). Still persist + log
           // so the debug UI sees it.
-          if (opts.conversationId.startsWith("sms:") && opts.kind !== "proactive") {
-            const number = opts.conversationId.slice(4);
-            await sendImessage(number, text);
+          if (opts.conversationId.startsWith("telegram:") && opts.kind !== "proactive") {
+            const chatId = opts.conversationId.slice("telegram:".length);
+            await sendMessage(chatId, text);
           }
           await convex.mutation(api.messages.send, {
             conversationId: opts.conversationId,

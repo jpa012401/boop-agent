@@ -49,7 +49,7 @@ export function createSelfMcp() {
             // which one is actually running this turn.
             embeddingsEnabled: true,
             embeddingsProvider: activeEmbeddingProvider(),
-            sendblueEnabled: Boolean(process.env.SENDBLUE_API_KEY),
+            telegramEnabled: Boolean(process.env.TELEGRAM_BOT_TOKEN),
           };
           return {
             content: [{ type: "text" as const, text: JSON.stringify(config, null, 2) }],
