@@ -36,7 +36,7 @@ export function validateSchedule(
   }
 }
 
-async function runAutomation(a: {
+export async function runAutomation(a: {
   automationId: string;
   name: string;
   task: string;
@@ -45,6 +45,7 @@ async function runAutomation(a: {
   timezone?: string;
   conversationId?: string;
   notifyConversationId?: string;
+  dataSchema?: string;
 }): Promise<void> {
   const runId = randomId("run");
   await convex.mutation(api.automations.createRun, {
@@ -54,11 +55,16 @@ async function runAutomation(a: {
   broadcast("automation_started", { automationId: a.automationId, runId, name: a.name });
 
   try {
+    const schemaNote = a.dataSchema
+      ? `\n\nDATA SCHEMA (save findings in this format): ${a.dataSchema}`
+      : "";
     const res = await spawnExecutionAgent({
-      task: `AUTOMATION "${a.name}": ${a.task}`,
+      task: `AUTOMATION "${a.name}": ${a.task}${schemaNote}`,
       integrations: a.integrations,
       conversationId: a.conversationId,
       name: `auto:${a.name}`,
+      automationId: a.automationId,
+      dataSchema: a.dataSchema,
     });
     await convex.mutation(api.automations.updateRun, {
       runId,
@@ -116,6 +122,7 @@ export async function tickAutomations(): Promise<void> {
       timezone: a.timezone,
       conversationId: a.conversationId,
       notifyConversationId: a.notifyConversationId,
+      dataSchema: a.dataSchema,
     }).catch((err) => console.error("[automations] run error", err));
   }
 }

@@ -3,7 +3,9 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
 import { buildMcpServersForIntegrations, listIntegrations } from "./integrations/registry.js";
+import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { createDraftStagingMcp } from "./draft-tools.js";
+import { createResearchMcp } from "./tools/research-tools.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel } from "./runtime-config.js";
 
@@ -67,20 +69,31 @@ output to the user verbatim, so if you don't include URLs, the user won't see
 any.
 
 Style:
-- Optimize for iMessage delivery: short sentences, bullets over paragraphs, no tables.
+- Optimize for Telegram delivery: short sentences, bullets over paragraphs, no tables.
 - Prefer markdown with **bold** keywords and • bullets.
 - Under 500 words unless explicitly asked for more.
 - If you can't complete something, say why in one sentence.
 
 Safety:
 - Anything that sends a message, creates an event, or takes an external action: call save_draft with a JSON payload instead of the real send/create tool. Return the summary so the interaction agent can show it to the user.
-- Only the interaction agent's send_draft tool commits. You never commit.`;
+- Only the interaction agent's send_draft tool commits. You never commit.
+
+Research dedup rules (when boop-research tools are available):
+- BEFORE reporting findings, call check_findings with the URLs you collected.
+- Skip anything that already exists in the findings table.
+- For each NEW finding, call save_finding with structured data matching the
+  automation's dataSchema (provided in your task description).
+- Only include genuinely new findings in your response to the user.
+- Start your response with "[N new findings]" when you found new items, or
+  "[No new findings]" when everything was already known.`;
 
 export interface SpawnOptions {
   task: string;
   integrations: string[];
   conversationId?: string;
   name?: string;
+  automationId?: string;
+  dataSchema?: string;
 }
 
 export interface SpawnResult {
@@ -122,10 +135,13 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   const draftServer = opts.conversationId
     ? createDraftStagingMcp(opts.conversationId)
     : undefined;
-  const mcpServers = {
+  const mcpServers: Record<string, McpSdkServerConfigWithInstance> = {
     ...integrationServers,
     ...(draftServer ? { "boop-drafts": draftServer } : {}),
   };
+  if (opts.dataSchema && opts.automationId) {
+    mcpServers["boop-research"] = createResearchMcp(opts.automationId);
+  }
   const allowedTools = [
     "WebSearch",
     "WebFetch",

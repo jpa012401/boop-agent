@@ -51,6 +51,12 @@ Integrations available: ${integrationHint}`,
             .optional()
             .default(true)
             .describe("If true, send the result to this conversation when it runs."),
+          dataSchema: z
+            .string()
+            .optional()
+            .describe(
+              "JSON string defining the schema for structured research findings. Example: '{\"company\":\"string\",\"amount\":\"string\",\"date\":\"string\"}'. When set, the execution agent gets research dedup tools and will store findings in this format.",
+            ),
         },
         async (args) => {
           // Resolve the user's timezone now and store it on the automation,
@@ -82,6 +88,7 @@ Integrations available: ${integrationHint}`,
             conversationId,
             notifyConversationId: args.notify ? conversationId : undefined,
             nextRunAt,
+            dataSchema: args.dataSchema,
           });
           const nextStr = nextRunAt
             ? new Intl.DateTimeFormat("en-US", {

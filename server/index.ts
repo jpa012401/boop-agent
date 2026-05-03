@@ -8,7 +8,7 @@ import { startTelegramPoller, stopTelegramPoller } from "./telegram.js";
 import { handleUserMessage } from "./interaction-agent.js";
 import { loadIntegrations } from "./integrations/registry.js";
 import { startCleanupLoop } from "./memory/clean.js";
-import { startAutomationLoop } from "./automations.js";
+import { startAutomationLoop, runAutomation } from "./automations.js";
 import { startHeartbeatLoop } from "./heartbeat.js";
 import { startConsolidationLoop } from "./consolidation.js";
 import { cancelAgent, retryAgent } from "./execution-agent.js";
@@ -58,6 +58,34 @@ async function main() {
   app.post("/agents/:id/cancel", (req, res) => {
     const ok = cancelAgent(req.params.id);
     res.json({ ok });
+  });
+
+  app.post("/automations/:id/run", async (req, res) => {
+    try {
+      const { convex } = await import("./convex-client.js");
+      const { api } = await import("../convex/_generated/api.js");
+      const auto = await convex.query(api.automations.get, {
+        automationId: req.params.id,
+      });
+      if (!auto) {
+        res.status(404).json({ error: "automation not found" });
+        return;
+      }
+      runAutomation({
+        automationId: auto.automationId,
+        name: auto.name,
+        task: auto.task,
+        integrations: auto.integrations,
+        schedule: auto.schedule,
+        timezone: auto.timezone,
+        conversationId: auto.conversationId,
+        notifyConversationId: auto.notifyConversationId,
+        dataSchema: auto.dataSchema,
+      }).catch((err) => console.error("[automations] manual run failed", err));
+      res.json({ ok: true, triggered: "manual" });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
   });
 
   app.post("/consolidate", async (_req, res) => {

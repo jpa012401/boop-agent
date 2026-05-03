@@ -162,6 +162,7 @@ export default defineSchema({
     notifyConversationId: v.optional(v.string()),
     lastRunAt: v.optional(v.number()),
     nextRunAt: v.optional(v.number()),
+    dataSchema: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_automation_id", ["automationId"])
@@ -231,4 +232,27 @@ export default defineSchema({
   })
     .index("by_automation", ["automationId"])
     .index("by_run_id", ["runId"]),
+
+  researchFindings: defineTable({
+    findingId: v.string(),
+    automationId: v.string(),
+    conversationId: v.optional(v.string()),
+    url: v.string(),
+    contentHash: v.string(),
+    title: v.string(),
+    data: v.string(),
+    tags: v.optional(v.array(v.string())),
+    status: v.union(
+      v.literal("new"),
+      v.literal("reported"),
+      v.literal("archived"),
+    ),
+    foundAt: v.number(),
+    reportedAt: v.optional(v.number()),
+  })
+    .index("by_finding_id", ["findingId"])
+    .index("by_automation", ["automationId"])
+    .index("by_url", ["url"])
+    .index("by_content_hash", ["contentHash"])
+    .index("by_status", ["automationId", "status"]),
 });
