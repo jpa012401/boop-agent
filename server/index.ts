@@ -41,7 +41,7 @@ async function main() {
     mkdirSync(codexDir, { recursive: true });
     writeFileSync(
       join(codexDir, "config.toml"),
-      `[mcp_servers.boop-tools]\ntype = "http"\nurl = "http://127.0.0.1:${mcpPort}/mcp"\n`,
+      `[mcp_servers.boop-tools]\ntype = "http"\nurl = "http://127.0.0.1:${mcpPort}/mcp"\ntool_timeout_sec = 300\nstartup_timeout_sec = 30\n`,
     );
     console.log(`[codex] wrote .codex/config.toml (MCP on :${mcpPort})`);
   }
