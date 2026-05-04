@@ -17,3 +17,5 @@ data/
 debug/dist/
 .cache/
 .tsbuildinfo
+# Codex provider config (generated at runtime)
+.codex/
