@@ -3,12 +3,10 @@ import { getProvider, getProviderName } from "./providers/index.js";
 import { z } from "zod";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
-import { createMemoryMcp } from "./memory/tools.js";
 import { extractAndStore } from "./memory/extract.js";
-import { availableIntegrations, spawnExecutionAgent } from "./execution-agent.js";
-import { createAutomationMcp } from "./automation-tools.js";
-import { createDraftDecisionMcp } from "./draft-tools.js";
-import { createSelfMcp } from "./self-tools.js";
+import { availableIntegrations } from "./execution-agent.js";
+import { interactionTools, makeSpawnTools } from "./tools/index.js";
+import { toolSpecsToClaudeMcp } from "./tools/adapters/claude.js";
 import { getRuntimeModel } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendMessage } from "./telegram.js";
@@ -196,10 +194,11 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     content: opts.content,
   });
 
-  const memoryServer = createMemoryMcp(opts.conversationId);
-  const automationServer = createAutomationMcp(opts.conversationId);
-  const draftDecisionServer = createDraftDecisionMcp(opts.conversationId);
-  const selfServer = createSelfMcp();
+  const ctx = { conversationId: opts.conversationId };
+  const toolServer = toolSpecsToClaudeMcp("boop-tools", "0.1.0", [
+    ...interactionTools,
+    ...makeSpawnTools(),
+  ], ctx);
 
   const ackServer = createSdkMcpServer({
     name: "boop-ack",
@@ -246,42 +245,6 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     ],
   });
 
-  const spawnServer = createSdkMcpServer({
-    name: "boop-spawn",
-    version: "0.1.0",
-    tools: [
-      tool(
-        "spawn_agent",
-        "Spawn a focused sub-agent to do real work using external tools. Returns the agent's final answer. Use for anything requiring lookups, drafting, or actions in the user's integrations.",
-        {
-          task: z
-            .string()
-            .describe("Crisp task description — what to find/draft/do, not the raw user message."),
-          integrations: z
-            .array(z.string())
-            .describe(`Which integrations to give the agent. Available: ${integrations.join(", ") || "(none)"}`),
-          name: z.string().optional().describe("Short label for the agent."),
-        },
-        async (args) => {
-          const res = await spawnExecutionAgent({
-            task: args.task,
-            integrations: args.integrations,
-            conversationId: opts.conversationId,
-            name: args.name,
-          });
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: `[agent ${res.agentId} ${res.status}]\n\n${res.result}`,
-              },
-            ],
-          };
-        },
-      ),
-    ],
-  });
-
   const history = await convex.query(api.messages.recent, {
     conversationId: opts.conversationId,
     limit: 10,
@@ -313,31 +276,12 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
       systemPrompt,
       model: requestedModel,
       mcpServers: {
-        "boop-memory": memoryServer,
-        "boop-spawn": spawnServer,
-        "boop-automations": automationServer,
-        "boop-draft-decisions": draftDecisionServer,
+        "boop-tools": toolServer,
         "boop-ack": ackServer,
-        "boop-self": selfServer,
       } as Record<string, unknown>,
       allowedTools: [
-        "mcp__boop-memory__write_memory",
-        "mcp__boop-memory__recall",
-        "mcp__boop-spawn__spawn_agent",
-        "mcp__boop-automations__create_automation",
-        "mcp__boop-automations__list_automations",
-        "mcp__boop-automations__toggle_automation",
-        "mcp__boop-automations__delete_automation",
-        "mcp__boop-draft-decisions__list_drafts",
-        "mcp__boop-draft-decisions__send_draft",
-        "mcp__boop-draft-decisions__reject_draft",
+        "mcp__boop-tools__*",
         "mcp__boop-ack__send_ack",
-        "mcp__boop-self__get_config",
-        "mcp__boop-self__set_model",
-        "mcp__boop-self__set_timezone",
-        "mcp__boop-self__list_integrations",
-        "mcp__boop-self__search_composio_catalog",
-        "mcp__boop-self__inspect_toolkit",
       ],
       disallowedTools: [
         "WebSearch", "WebFetch", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "Skill",
