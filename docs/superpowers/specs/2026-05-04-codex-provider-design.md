@@ -102,40 +102,50 @@ Uses `@openai/codex-sdk`:
 4. Streams events and normalizes them to `NormalizedMessage`.
 5. On turn completion, extracts usage data from the SDK's response.
 
-### MCP Tool Bridge (`server/providers/codex-mcp-bridge.ts`)
+### MCP Tool Server (`server/providers/codex-mcp-server.ts`)
 
-Codex has native shell/file tools but doesn't mount MCP servers the way the Claude Agent SDK does. The bridge exposes MCP tools as callable shell commands:
+Codex has native shell/file tools but doesn't mount in-process MCP servers the way the Claude Agent SDK does. The Claude SDK calls tool handler functions directly in-process; Codex expects to connect to **external MCP servers** over stdio or HTTP.
+
+**Solution:** Spin up a local Streamable HTTP MCP server within the Boop Node.js process that exposes all Boop tools. Codex connects to it via `.codex/config.toml`.
 
 **Mechanism:**
 
-1. At agent start, generate a temp directory (e.g., `/tmp/boop-mcp-tools-<id>/`).
-2. For each MCP tool, create an executable Node.js script that:
-   - Accepts JSON input via stdin or as a CLI argument.
-   - Calls the MCP tool handler function directly (in-process via IPC or imported).
-   - Writes JSON result to stdout.
-3. Prepend the temp directory to `$PATH` in the Codex execution environment.
-4. Include tool documentation in the system prompt so Codex knows what's available and how to call each tool.
-5. Clean up the temp directory after the agent run completes.
+1. At startup (when `BOOP_PROVIDER=codex`), start a local HTTP server on a configurable port (default `localhost:3456`).
+2. The server implements the MCP Streamable HTTP transport protocol.
+3. It registers all the same tool handlers that Claude SDK uses (memory, spawn, automations, drafts, self, Composio integrations).
+4. A `.codex/config.toml` file in the project root is generated/updated at startup, pointing Codex at this local server.
+5. The server runs for the lifetime of the process; no per-run cleanup needed.
 
-**Example generated tool script:**
+**Generated `.codex/config.toml`:**
 
-```bash
-#!/usr/bin/env node
-// /tmp/boop-mcp-tools-abc123/recall
-// Usage: echo '{"query":"..."}' | recall
-// Calls boop-memory MCP's recall tool
+```toml
+[mcp_servers.boop-tools]
+type = "http"
+url = "http://localhost:3456/mcp"
 ```
 
-**System prompt addendum for Codex:**
+**How it works at runtime:**
 
 ```
-## Available Tools (call via shell)
-
-- `echo '{"query":"..."}' | recall` — Search memory for relevant records
-- `echo '{"content":"...","tags":["..."]}' | write_memory` — Save to memory
-- `echo '{"task":"...","integrations":["..."]}' | spawn_agent` — Spawn sub-agent
-...
+Codex SDK (thread.run)
+    │
+    │  model decides to call "recall" tool
+    ▼
+Codex app-server connects to http://localhost:3456/mcp
+    │
+    ▼
+codex-mcp-server.ts (in Boop's Node process)
+    │  routes tool call to the same handler functions
+    ▼
+Convex / Composio / etc.
 ```
+
+**Key details:**
+- Uses the `@modelcontextprotocol/sdk` package (already the standard MCP server library) to implement the HTTP transport.
+- Tool handlers are the same functions used by Claude SDK's `createSdkMcpServer()` — just re-registered on the HTTP server.
+- The server dynamically registers integration tools (Composio) based on what's loaded in the registry.
+- Per-run context (like `conversationId`) is passed via tool input parameters, not server state.
+- The `.codex/config.toml` file lives in the project root at `server/providers/.codex/config.toml` (gitignored).
 
 ### Model Configuration
 
@@ -220,17 +230,18 @@ CODEX_COST_PER_1K_OUTPUT=0.03
 | `server/providers/index.ts` | Create | `getProvider()` factory, reads `BOOP_PROVIDER` env var |
 | `server/providers/claude.ts` | Create | Wraps `query()` from Claude Agent SDK |
 | `server/providers/codex.ts` | Create | Wraps `@openai/codex-sdk` thread/run |
-| `server/providers/codex-mcp-bridge.ts` | Create | Generates CLI wrappers for MCP tools |
+| `server/providers/codex-mcp-server.ts` | Create | Local HTTP MCP server exposing Boop tools to Codex |
+| `.codex/config.toml` | Create (gitignored) | Points Codex at local MCP server |
 | `server/execution-agent.ts` | Modify | Replace `import { query }` with `getProvider().execute()` |
 | `server/interaction-agent.ts` | Modify | Replace `import { query }` with `getProvider().execute()` |
 | `server/usage.ts` | Modify | Move Claude-specific parsing into `claude.ts`; keep interface |
 | `server/runtime-config.ts` | Modify | Provider-aware model sets, aliases, defaults |
-| `package.json` | Modify | Add `@openai/codex-sdk` dependency |
+| `package.json` | Modify | Add `@openai/codex-sdk` and `@modelcontextprotocol/sdk` dependencies |
 
 ## Constraints & Decisions
 
 1. **No hot-switching** — Provider is read at startup. Restart to change. This keeps the system simple and avoids mid-conversation provider mismatches.
-2. **MCP bridge is best-effort** — Codex's shell-based tool invocation is less structured than Claude SDK's native MCP mounting. Some tools may behave differently (e.g., streaming tool results). Acceptable for v1.
+2. **MCP over HTTP** — Codex connects to Boop's tools via a local HTTP MCP server running in the same Node.js process. This uses the standard MCP Streamable HTTP transport. The same tool handler functions are shared between both providers — only the transport differs.
 3. **Codex threading** — Each agent run (interaction turn or execution task) gets a fresh thread. We don't reuse Codex threads across Boop conversation turns since the conversation history is managed by Boop's own Convex-backed system.
 4. **Feature parity is not a goal for v1** — Some Claude SDK features (prompt caching, `settingSources`, skill loading) won't have Codex equivalents. The Codex provider skips these gracefully.
 5. **Codex model list may need updating** — The model set is based on current Codex availability. New models should be added to `PROVIDER_MODELS.codex` as they become available.
