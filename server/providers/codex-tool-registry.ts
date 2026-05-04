@@ -43,7 +43,17 @@ function randomId(prefix: string): string {
  * TODO: get_config, set_model, set_timezone, list_integrations,
  *       search_composio_catalog, inspect_toolkit  (self MCP)
  */
-export function buildInteractionTools(conversationId: string): ToolDefinition[] {
+/**
+ * Resolve the default conversationId for Codex tools. Since Boop is single-user,
+ * we derive it from BOOP_USER_CHAT_ID (the Telegram chat ID).
+ */
+export function defaultConversationId(): string {
+  const chatId = process.env.BOOP_USER_CHAT_ID;
+  return chatId ? `telegram:${chatId}` : "codex:default";
+}
+
+export function buildInteractionTools(conversationId?: string): ToolDefinition[] {
+  const convId = conversationId ?? defaultConversationId();
   return [
     // -------------------------------------------------------------------------
     // recall
@@ -101,7 +111,7 @@ export function buildInteractionTools(conversationId: string): ToolDefinition[] 
 
         await convex.mutation(api.memoryEvents.emit, {
           eventType: "memory.recalled",
-          conversationId,
+          conversationId: convId,
           data: JSON.stringify({ query, hits: results.length, mode }),
         });
 
@@ -178,7 +188,7 @@ export function buildInteractionTools(conversationId: string): ToolDefinition[] 
 
         await convex.mutation(api.memoryEvents.emit, {
           eventType: "memory.written",
-          conversationId,
+          conversationId: convId,
           memoryId,
           data: JSON.stringify({
             tier,
@@ -222,7 +232,7 @@ export function buildInteractionTools(conversationId: string): ToolDefinition[] 
         const res = await spawnExecutionAgent({
           task: args.task as string,
           integrations: args.integrations as string[],
-          conversationId,
+          conversationId: convId,
           name: args.name as string | undefined,
         });
         return `[agent ${res.agentId} ${res.status}]\n\n${res.result}`;
@@ -250,7 +260,7 @@ export function buildInteractionTools(conversationId: string): ToolDefinition[] 
           typeof args.enabledOnly === "boolean" ? args.enabledOnly : false;
         const all = await convex.query(api.automations.list, { enabledOnly });
         const mine = all.filter(
-          (a: Record<string, unknown>) => a.conversationId === conversationId,
+          (a: Record<string, unknown>) => a.conversationId === convId,
         );
         if (mine.length === 0) {
           return "No automations.";
@@ -289,7 +299,7 @@ export function buildInteractionTools(conversationId: string): ToolDefinition[] 
 
         const turnId = randomId("turn");
         await convex.mutation(api.messages.send, {
-          conversationId,
+          conversationId: convId,
           role: "assistant",
           content: text,
           turnId,

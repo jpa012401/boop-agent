@@ -19,7 +19,8 @@ import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 import { getProviderName } from "./providers/index.js";
-import { startCodexMcpServer } from "./providers/codex-mcp-server.js";
+import { startCodexMcpServer, registerToolsForCodex } from "./providers/codex-mcp-server.js";
+import { buildInteractionTools } from "./providers/codex-tool-registry.js";
 
 async function main() {
   await loadIntegrations();
@@ -28,6 +29,7 @@ async function main() {
   // connect to Boop's tools, and write a .codex/config.toml pointing at it.
   if (getProviderName() === "codex") {
     const mcpPort = parseInt(process.env.CODEX_MCP_PORT ?? "3457");
+    registerToolsForCodex(buildInteractionTools());
     await startCodexMcpServer(mcpPort);
     const codexDir = join(process.cwd(), ".codex");
     mkdirSync(codexDir, { recursive: true });
