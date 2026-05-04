@@ -274,12 +274,107 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
  * @param _conversationId - Reserved for future use (e.g. draft staging).
  * @param _integrations   - Reserved for future Composio tool mounting.
  */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function buildExecutionTools(
   _conversationId: string,
   _integrations: string[],
 ): ToolDefinition[] {
   // TODO: Mount Composio integration tools once a ToolDefinition adapter exists.
   // TODO: Add save_draft tool mirroring createDraftStagingMcp for execution agents.
-  return [];
+  return [
+    // -------------------------------------------------------------------------
+    // list_research_findings — query saved research data
+    // -------------------------------------------------------------------------
+    {
+      name: "list_research_findings",
+      description:
+        "List research findings saved by automations. Use this to look up previously discovered items — businesses, listings, articles, etc. — that Boop's research automations have found.",
+      schema: {
+        automationId: z.string().optional().describe("Filter by automation ID. Omit to search all."),
+        limit: z.number().optional().default(20).describe("Max results to return (default 20)."),
+      },
+      handler: async (args) => {
+        const automationId = args.automationId as string | undefined;
+        const limit = typeof args.limit === "number" ? args.limit : 20;
+
+        if (automationId) {
+          const results = await convex.query(api.researchFindings.listByAutomation, {
+            automationId,
+            limit,
+          });
+          if (results.length === 0) return "No findings for this automation.";
+          return results
+            .map((r: Record<string, unknown>) =>
+              `• [${r.findingId}] "${r.title}" — ${r.url}\n  Data: ${r.data}`,
+            )
+            .join("\n\n");
+        }
+
+        // No automationId — list all automations first, then pull findings from each
+        const autos = await convex.query(api.automations.list, { enabledOnly: false });
+        if (autos.length === 0) return "No automations found.";
+
+        const allFindings: string[] = [];
+        for (const auto of autos) {
+          const autoId = auto.automationId as string;
+          const results = await convex.query(api.researchFindings.listByAutomation, {
+            automationId: autoId,
+            limit: Math.ceil(limit / autos.length) || 5,
+          });
+          for (const r of results) {
+            allFindings.push(
+              `• [${r.findingId}] (${auto.name}) "${r.title}" — ${r.url}\n  Data: ${(r as Record<string, unknown>).data}`,
+            );
+          }
+        }
+        if (allFindings.length === 0) return "No research findings saved yet.";
+        return allFindings.slice(0, limit).join("\n\n");
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // recall (also available in execution layer for context)
+    // -------------------------------------------------------------------------
+    {
+      name: "recall",
+      description:
+        "Search Boop's memory for relevant context. Use this to find previously saved facts about the user, their projects, preferences, or past research.",
+      schema: {
+        query: z.string().describe("Keywords or topic to search for."),
+        limit: z.number().optional().default(10).describe("Maximum results (default 10)."),
+      },
+      handler: async (args) => {
+        const query = args.query as string;
+        const limit = typeof args.limit === "number" ? args.limit : 10;
+
+        let results: Array<Record<string, unknown>> = [];
+
+        if (embeddingsAvailable()) {
+          const queryVec = await embed(query);
+          if (queryVec) {
+            const hits = await convex.action(api.memoryRecords.vectorSearch, {
+              embedding: queryVec,
+              limit,
+            });
+            results = hits.map((h) => h.record as Record<string, unknown>);
+          }
+        }
+
+        if (results.length === 0) {
+          results = (await convex.query(api.memoryRecords.search, {
+            query,
+            limit,
+          })) as Array<Record<string, unknown>>;
+        }
+
+        if (results.length === 0) return "No memories matched.";
+
+        return results
+          .map(
+            (r) =>
+              `• [${r.tier}/${r.segment}] ${r.memoryId}: ${r.content}`,
+          )
+          .join("\n");
+      },
+    },
+  ];
 }

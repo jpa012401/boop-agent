@@ -20,7 +20,7 @@ import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 import { getProviderName } from "./providers/index.js";
 import { startCodexMcpServer, registerToolsForCodex } from "./providers/codex-mcp-server.js";
-import { buildInteractionTools } from "./providers/codex-tool-registry.js";
+import { buildInteractionTools, buildExecutionTools } from "./providers/codex-tool-registry.js";
 
 async function main() {
   await loadIntegrations();
@@ -30,6 +30,7 @@ async function main() {
   if (getProviderName() === "codex") {
     const mcpPort = parseInt(process.env.CODEX_MCP_PORT ?? "3457");
     registerToolsForCodex(buildInteractionTools());
+    registerToolsForCodex(buildExecutionTools("", []));
     await startCodexMcpServer(mcpPort);
     const codexDir = join(process.cwd(), ".codex");
     mkdirSync(codexDir, { recursive: true });
