@@ -1,4 +1,5 @@
-import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { getProvider } from "./providers/index.js";
 import { z } from "zod";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
@@ -11,7 +12,7 @@ import { createSelfMcp } from "./self-tools.js";
 import { getRuntimeModel } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendMessage } from "./telegram.js";
-import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
+import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 
 const INTERACTION_SYSTEM = `You are Boop, a personal agent the user messages on Telegram.
 
@@ -307,64 +308,45 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   let reply = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
   try {
-    for await (const msg of query({
-      prompt,
-      options: {
-        systemPrompt,
-        model: requestedModel,
-        mcpServers: {
-          "boop-memory": memoryServer,
-          "boop-spawn": spawnServer,
-          "boop-automations": automationServer,
-          "boop-draft-decisions": draftDecisionServer,
-          "boop-ack": ackServer,
-          "boop-self": selfServer,
-        },
-        allowedTools: [
-          "mcp__boop-memory__write_memory",
-          "mcp__boop-memory__recall",
-          "mcp__boop-spawn__spawn_agent",
-          "mcp__boop-automations__create_automation",
-          "mcp__boop-automations__list_automations",
-          "mcp__boop-automations__toggle_automation",
-          "mcp__boop-automations__delete_automation",
-          "mcp__boop-draft-decisions__list_drafts",
-          "mcp__boop-draft-decisions__send_draft",
-          "mcp__boop-draft-decisions__reject_draft",
-          "mcp__boop-ack__send_ack",
-          "mcp__boop-self__get_config",
-          "mcp__boop-self__set_model",
-          "mcp__boop-self__set_timezone",
-          "mcp__boop-self__list_integrations",
-          "mcp__boop-self__search_composio_catalog",
-          "mcp__boop-self__inspect_toolkit",
-        ],
-        // Belt-and-suspenders: even with bypassPermissions the SDK can leak
-        // its built-ins if we only whitelist. Explicitly block them on the
-        // dispatcher so it MUST spawn a sub-agent for external work.
-        disallowedTools: [
-          "WebSearch",
-          "WebFetch",
-          "Bash",
-          "Read",
-          "Write",
-          "Edit",
-          "Glob",
-          "Grep",
-          "Agent",
-          "Skill",
-        ],
-        permissionMode: "bypassPermissions",
-      },
+    const provider = getProvider();
+    for await (const msg of provider.execute(prompt, {
+      systemPrompt,
+      model: requestedModel,
+      mcpServers: {
+        "boop-memory": memoryServer,
+        "boop-spawn": spawnServer,
+        "boop-automations": automationServer,
+        "boop-draft-decisions": draftDecisionServer,
+        "boop-ack": ackServer,
+        "boop-self": selfServer,
+      } as Record<string, unknown>,
+      allowedTools: [
+        "mcp__boop-memory__write_memory",
+        "mcp__boop-memory__recall",
+        "mcp__boop-spawn__spawn_agent",
+        "mcp__boop-automations__create_automation",
+        "mcp__boop-automations__list_automations",
+        "mcp__boop-automations__toggle_automation",
+        "mcp__boop-automations__delete_automation",
+        "mcp__boop-draft-decisions__list_drafts",
+        "mcp__boop-draft-decisions__send_draft",
+        "mcp__boop-draft-decisions__reject_draft",
+        "mcp__boop-ack__send_ack",
+        "mcp__boop-self__get_config",
+        "mcp__boop-self__set_model",
+        "mcp__boop-self__set_timezone",
+        "mcp__boop-self__list_integrations",
+        "mcp__boop-self__search_composio_catalog",
+        "mcp__boop-self__inspect_toolkit",
+      ],
+      disallowedTools: [
+        "WebSearch", "WebFetch", "Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "Skill",
+      ],
+      permissionMode: "bypassPermissions",
     })) {
       if (msg.type === "assistant") {
-        // Reset `reply` on each new assistant turn so only the LAST turn's
-        // text becomes the user-facing iMessage. Earlier turns are usually
-        // pre-tool-call narration ("Got it — saving that now.") that, if
-        // concatenated with the post-tool-result final text, sends as one
-        // smushed iMessage. Streaming via onThinking still sees everything.
         reply = "";
-        for (const block of msg.message.content) {
+        for (const block of msg.content) {
           if (block.type === "text") {
             reply += block.text;
             opts.onThinking?.(block.text);
@@ -376,8 +358,15 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
             );
           }
         }
-      } else if (msg.type === "result") {
-        usage = aggregateUsageFromResult(msg, requestedModel);
+      } else if (msg.type === "result" && msg.usage) {
+        usage = {
+          model: msg.usage.model,
+          inputTokens: msg.usage.inputTokens,
+          outputTokens: msg.usage.outputTokens,
+          cacheReadTokens: msg.usage.cacheReadTokens,
+          cacheCreationTokens: msg.usage.cacheCreationTokens,
+          costUsd: msg.usage.costUsd,
+        };
       }
     }
   } catch (err) {
