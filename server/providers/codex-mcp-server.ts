@@ -79,8 +79,12 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
   }
 
   const httpServer = http.createServer(async (req, res) => {
+    const method = req.method ?? "?";
+    const url = req.url ?? "?";
+    console.log(`[codex-mcp-server] ${method} ${url}`);
+
     // Only handle requests to /mcp.
-    if (req.url !== "/mcp") {
+    if (url !== "/mcp") {
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
       return;
@@ -97,6 +101,7 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
     try {
       await mcpServer.connect(transport);
       await transport.handleRequest(req, res);
+      console.log(`[codex-mcp-server] ${method} ${url} → ${res.statusCode}`);
     } catch (err) {
       console.error("[codex-mcp-server] Error handling MCP request:", err);
       if (!res.headersSent) {
