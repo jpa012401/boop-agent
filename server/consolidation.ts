@@ -1,8 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
-import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
+import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -120,20 +120,26 @@ async function runLlm(
   const started = Date.now();
   let buffer = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
-  for await (const msg of query({
-    prompt: userPrompt,
-    options: {
-      systemPrompt,
-      model,
-      permissionMode: "bypassPermissions",
-    },
+  for await (const msg of getProvider().execute(userPrompt, {
+    systemPrompt,
+    model,
+    mcpServers: {},
+    allowedTools: [],
+    permissionMode: "bypassPermissions",
   })) {
     if (msg.type === "assistant") {
-      for (const block of msg.message.content) {
+      for (const block of msg.content) {
         if (block.type === "text") buffer += block.text;
       }
-    } else if (msg.type === "result") {
-      usage = aggregateUsageFromResult(msg, model);
+    } else if (msg.type === "result" && msg.usage) {
+      usage = {
+        model: msg.usage.model,
+        inputTokens: msg.usage.inputTokens,
+        outputTokens: msg.usage.outputTokens,
+        cacheReadTokens: msg.usage.cacheReadTokens,
+        cacheCreationTokens: msg.usage.cacheCreationTokens,
+        costUsd: msg.usage.costUsd,
+      };
     }
   }
   return { buffer, usage, durationMs: Date.now() - started };
@@ -148,6 +154,7 @@ async function recordConsolidationUsage(
   if (usage.costUsd <= 0 && usage.inputTokens <= 0) return;
   await convex.mutation(api.usageRecords.record, {
     source,
+    provider: getProviderName(),
     runId,
     model: usage.model,
     inputTokens: usage.inputTokens,

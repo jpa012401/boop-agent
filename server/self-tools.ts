@@ -9,12 +9,13 @@ import {
 import { availableIntegrations } from "./execution-agent.js";
 import { activeProvider as activeEmbeddingProvider } from "./embeddings.js";
 import {
-  KNOWN_MODELS,
-  MODEL_ALIASES,
+  PROVIDER_MODELS,
+  PROVIDER_MODEL_ALIASES,
   getRuntimeModel,
   resolveModelInput,
   setRuntimeModel,
 } from "./runtime-config.js";
+import { getProviderName } from "./providers/index.js";
 import {
   describeUserNow,
   getStoredUserTimezone,
@@ -37,7 +38,7 @@ export function createSelfMcp() {
           const config = {
             model: await getRuntimeModel(),
             envDefault: process.env.BOOP_MODEL ?? "claude-sonnet-4-6",
-            availableModels: [...KNOWN_MODELS],
+            availableModels: [...(PROVIDER_MODELS[getProviderName()] ?? [])],
             userTimezone: tzInfo.isExplicit ? tzInfo.timezone : null,
             timezoneFallback: tzInfo.isExplicit ? null : tzInfo.timezone,
             currentLocalTime: tzInfo.now,
@@ -96,8 +97,8 @@ Use when the user tells you their timezone or location ("I'm in Dallas", "use ce
         "set_model",
         `Switch the Claude model used for both this dispatcher and any sub-agents. The change applies to the *next* turn (this turn finishes on the current model). Accepts either a canonical ID or a friendly alias.
 
-Aliases: ${Object.keys(MODEL_ALIASES).map((k) => `"${k}"`).join(", ")}
-Canonical: ${[...KNOWN_MODELS].map((k) => `"${k}"`).join(", ")}
+Aliases: ${Object.keys(PROVIDER_MODEL_ALIASES[getProviderName()] ?? {}).map((k) => `"${k}"`).join(", ")}
+Canonical: ${[...(PROVIDER_MODELS[getProviderName()] ?? [])].map((k) => `"${k}"`).join(", ")}
 
 Use when the user says "use opus", "switch to sonnet", "make it faster (haiku)", etc.
 
@@ -114,7 +115,7 @@ Cost note (approximate, per 1M output tokens): Opus 4.7 ≈ $75, Sonnet 4.6 ≈ 
               content: [
                 {
                   type: "text" as const,
-                  text: `Unknown model "${model}". Try one of: ${[...KNOWN_MODELS].join(", ")} or aliases ${Object.keys(MODEL_ALIASES).join(", ")}.`,
+                  text: `Unknown model "${model}". Try one of: ${[...(PROVIDER_MODELS[getProviderName()] ?? [])].join(", ")} or aliases ${Object.keys(PROVIDER_MODEL_ALIASES[getProviderName()] ?? {}).join(", ")}.`,
                 },
               ],
             };

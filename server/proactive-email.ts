@@ -4,10 +4,10 @@
 // → recall user preferences → cheap Haiku classifier → on important, route
 // the summary into the interaction agent as a synthetic system message so it
 // gets the same tone/spawn pipeline as a real user turn.
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
-import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
+import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { handleUserMessage } from "./interaction-agent.js";
 import { sendMessage } from "./telegram.js";
 import { ensureTrigger, getComposio, listConnectedToolkits } from "./composio.js";
@@ -212,20 +212,26 @@ export async function classifyEmailImportance(
 
   let buffer = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
-  for await (const msg of query({
-    prompt: userPrompt,
-    options: {
-      systemPrompt: `${RUBRIC_PROMPT}\n\n${prefBlock}\n\n${idBlock}\n\n${timeBlock}`,
-      model,
-      permissionMode: "bypassPermissions",
-    },
+  for await (const msg of getProvider().execute(userPrompt, {
+    systemPrompt: `${RUBRIC_PROMPT}\n\n${prefBlock}\n\n${idBlock}\n\n${timeBlock}`,
+    model,
+    mcpServers: {},
+    allowedTools: [],
+    permissionMode: "bypassPermissions",
   })) {
     if (msg.type === "assistant") {
-      for (const block of msg.message.content) {
+      for (const block of msg.content) {
         if (block.type === "text") buffer += block.text;
       }
-    } else if (msg.type === "result") {
-      usage = aggregateUsageFromResult(msg, model);
+    } else if (msg.type === "result" && msg.usage) {
+      usage = {
+        model: msg.usage.model,
+        inputTokens: msg.usage.inputTokens,
+        outputTokens: msg.usage.outputTokens,
+        cacheReadTokens: msg.usage.cacheReadTokens,
+        cacheCreationTokens: msg.usage.cacheCreationTokens,
+        costUsd: msg.usage.costUsd,
+      };
     }
   }
 
@@ -246,6 +252,7 @@ export async function classifyEmailImportance(
   if (recordUsage && (usage.costUsd > 0 || usage.inputTokens > 0)) {
     await convex.mutation(api.usageRecords.record, {
       source: "proactive",
+      provider: getProviderName(),
       model: usage.model,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,

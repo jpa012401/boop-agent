@@ -1,7 +1,9 @@
 import "./env-setup.js";
 import express from "express";
 import cors from "cors";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
+import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import { addClient } from "./broadcast.js";
 import { startTelegramPoller, stopTelegramPoller } from "./telegram.js";
@@ -16,9 +18,26 @@ import { createComposioRouter } from "./composio-routes.js";
 import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
+import { getProviderName } from "./providers/index.js";
+import { startCodexMcpServer } from "./providers/codex-mcp-server.js";
 
 async function main() {
   await loadIntegrations();
+
+  // When using the Codex provider, start a local HTTP MCP server so Codex can
+  // connect to Boop's tools, and write a .codex/config.toml pointing at it.
+  if (getProviderName() === "codex") {
+    const mcpPort = parseInt(process.env.CODEX_MCP_PORT ?? "3457");
+    await startCodexMcpServer(mcpPort);
+    const codexDir = join(process.cwd(), ".codex");
+    mkdirSync(codexDir, { recursive: true });
+    writeFileSync(
+      join(codexDir, "config.toml"),
+      `[mcp_servers.boop-tools]\ntype = "http"\nurl = "http://127.0.0.1:${mcpPort}/mcp"\n`,
+    );
+    console.log(`[codex] wrote .codex/config.toml (MCP on :${mcpPort})`);
+  }
+
   startCleanupLoop();
   startAutomationLoop();
   startHeartbeatLoop();

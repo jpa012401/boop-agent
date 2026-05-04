@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
@@ -6,7 +6,7 @@ import { buildMcpServersForIntegrations, listIntegrations } from "./integrations
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { createDraftStagingMcp } from "./draft-tools.js";
 import { createResearchMcp } from "./tools/research-tools.js";
-import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
+import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel } from "./runtime-config.js";
 
 const running = new Map<string, AbortController>();
@@ -156,22 +156,18 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
 
   const requestedModel = await getRuntimeModel();
   try {
-    for await (const msg of query({
-      prompt: opts.task,
-      options: {
-        systemPrompt: EXECUTION_SYSTEM,
-        model: requestedModel,
-        mcpServers,
-        allowedTools,
-        // Load .claude/skills/ so the model can invoke SKILL.md playbooks. Without
-        // this the SDK runs in isolation mode and skills are silently ignored.
-        settingSources: ["project"],
-        permissionMode: "bypassPermissions",
-        abortController: abort,
-      },
+    const provider = getProvider();
+    for await (const msg of provider.execute(opts.task, {
+      systemPrompt: EXECUTION_SYSTEM,
+      model: requestedModel,
+      mcpServers: mcpServers as Record<string, unknown>,
+      allowedTools,
+      abortController: abort,
+      permissionMode: "bypassPermissions",
+      settingSources: ["project"],
     })) {
       if (msg.type === "assistant") {
-        for (const block of msg.message.content) {
+        for (const block of msg.content) {
           if (block.type === "text") {
             buffer += block.text;
             await convex.mutation(api.agents.addLog, {
@@ -195,24 +191,24 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
           }
         }
       } else if (msg.type === "user") {
-        for (const block of msg.message.content) {
+        for (const block of msg.content) {
           if (block.type === "tool_result") {
-            const text = Array.isArray(block.content)
-              ? block.content
-                  .map((c: { type: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : ""))
-                  .join("")
-              : String(block.content ?? "");
             await convex.mutation(api.agents.addLog, {
               agentId,
               logType: "tool_result",
-              content: text.slice(0, 2000),
+              content: block.content.slice(0, 2000),
             });
           }
         }
-      } else if (msg.type === "result") {
-        // Always take the aggregate from modelUsage — msg.usage is just the
-        // final turn's raw tokens and massively undercounts on tool-heavy runs.
-        usage = aggregateUsageFromResult(msg, requestedModel);
+      } else if (msg.type === "result" && msg.usage) {
+        usage = {
+          model: msg.usage.model,
+          inputTokens: msg.usage.inputTokens,
+          outputTokens: msg.usage.outputTokens,
+          cacheReadTokens: msg.usage.cacheReadTokens,
+          cacheCreationTokens: msg.usage.cacheCreationTokens,
+          costUsd: msg.usage.costUsd,
+        };
       }
     }
   } catch (err) {
@@ -247,6 +243,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   if (usage.costUsd > 0 || usage.inputTokens > 0) {
     await convex.mutation(api.usageRecords.record, {
       source: "execution",
+      provider: getProviderName(),
       conversationId: opts.conversationId,
       agentId,
       model: usage.model,
