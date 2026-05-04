@@ -19,9 +19,6 @@ import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 import { getProviderName } from "./providers/index.js";
-import { startCodexMcpServer, registerToolsForCodex } from "./providers/codex-mcp-server.js";
-import { interactionTools, executionTools, makeSpawnTools, defaultConversationId } from "./tools/index.js";
-import { toolSpecsToCodexDefs } from "./tools/adapters/codex.js";
 
 async function main() {
   await loadIntegrations();
@@ -29,21 +26,21 @@ async function main() {
   // When using the Codex provider, start a local HTTP MCP server so Codex can
   // connect to Boop's tools, and write a .codex/config.toml pointing at it.
   if (getProviderName() === "codex") {
-    const mcpPort = parseInt(process.env.CODEX_MCP_PORT ?? "3457");
-    const codexCtx = { conversationId: defaultConversationId() };
-    registerToolsForCodex(toolSpecsToCodexDefs([
-      ...interactionTools,
-      ...makeSpawnTools(),
-      ...executionTools,
-    ], codexCtx));
-    await startCodexMcpServer(mcpPort);
     const codexDir = join(process.cwd(), ".codex");
     mkdirSync(codexDir, { recursive: true });
     writeFileSync(
       join(codexDir, "config.toml"),
-      `[mcp_servers.boop-tools]\ntype = "http"\nurl = "http://127.0.0.1:${mcpPort}/mcp"\ntool_timeout_sec = 300\nstartup_timeout_sec = 30\n`,
+      [
+        "[mcp_servers.boop-tools]",
+        'type = "stdio"',
+        'command = "tsx"',
+        'args = ["server/providers/codex-mcp-stdio.ts"]',
+        "tool_timeout_sec = 300",
+        "startup_timeout_sec = 60",
+        "",
+      ].join("\n"),
     );
-    console.log(`[codex] wrote .codex/config.toml (MCP on :${mcpPort})`);
+    console.log("[codex] wrote .codex/config.toml (stdio MCP)");
   }
 
   startCleanupLoop();
