@@ -17,6 +17,9 @@ export const PROVIDER_MODELS: Record<string, Set<string>> = {
     "o4-mini",
     "gpt-4.1",
     "codex-mini",
+    "gpt-5.5",
+    "gpt-5.4-mini",
+    "gpt-5.3-codex-spark",
   ]),
 };
 
@@ -37,12 +40,19 @@ export const PROVIDER_MODEL_ALIASES: Record<string, Record<string, string>> = {
     "gpt 4.1": "gpt-4.1",
     "codex-mini": "codex-mini",
     "codex mini": "codex-mini",
+    "gpt-5.5": "gpt-5.5",
+    "gpt 5.5": "gpt-5.5",
+    "gpt-5.4-mini": "gpt-5.4-mini",
+    "gpt 5.4 mini": "gpt-5.4-mini",
+    "gpt-5.3-codex-spark": "gpt-5.3-codex-spark",
+    "codex-spark": "gpt-5.3-codex-spark",
+    spark: "gpt-5.3-codex-spark",
   },
 };
 
 export const PROVIDER_DEFAULTS: Record<string, string> = {
   claude: "claude-sonnet-4-6",
-  codex: "o3",
+  codex: "gpt-5.5",
 };
 
 export function resolveModelInput(input: string): string | null {

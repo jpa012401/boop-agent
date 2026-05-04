@@ -21,7 +21,7 @@ const CODEX_COST_PER_1K_OUTPUT = parseFloat(
 
 export const codexProvider: Provider = {
   name: "codex",
-  defaultModel: "o3",
+  defaultModel: "gpt-5.5",
 
   async *execute(
     prompt: string,

@@ -29,7 +29,6 @@ export interface ToolDefinition {
 // Module-level state
 // ---------------------------------------------------------------------------
 
-let _mcpServer: McpServer | null = null;
 let _httpServer: http.Server | null = null;
 const _registeredTools: ToolDefinition[] = [];
 
@@ -39,18 +38,26 @@ const _registeredTools: ToolDefinition[] = [];
 
 /**
  * Register tools that should be exposed over MCP. Call this before
- * `startCodexMcpServer()` — or after, in which case the running server's
- * McpServer will be updated immediately.
+ * `startCodexMcpServer()`.
  */
 export function registerToolsForCodex(tools: ToolDefinition[]): void {
   _registeredTools.push(...tools);
+}
 
-  // If the server is already running, mount any newly added tools right away.
-  if (_mcpServer) {
-    for (const tool of tools) {
-      _mountTool(_mcpServer, tool);
-    }
+/**
+ * Create a fresh McpServer with all registered tools mounted. A new instance
+ * is needed per HTTP request because McpServer.connect() binds to a single
+ * transport and cannot be reused across connections.
+ */
+function _createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "boop-codex-mcp",
+    version: "1.0.0",
+  });
+  for (const tool of _registeredTools) {
+    _mountTool(server, tool);
   }
+  return server;
 }
 
 /**
@@ -65,18 +72,6 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
     return;
   }
 
-  const mcpServer = new McpServer({
-    name: "boop-codex-mcp",
-    version: "1.0.0",
-  });
-
-  // Mount every tool that was registered before start.
-  for (const tool of _registeredTools) {
-    _mountTool(mcpServer, tool);
-  }
-
-  _mcpServer = mcpServer;
-
   const httpServer = http.createServer(async (req, res) => {
     // Only handle requests to /mcp.
     if (req.url !== "/mcp") {
@@ -85,9 +80,10 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
       return;
     }
 
-    // The MCP Streamable HTTP transport is stateless here (no session IDs)
-    // so each request gets its own transport instance connected to the shared
-    // McpServer.
+    // Each request gets a fresh McpServer + transport pair. The MCP SDK binds
+    // a server to exactly one transport via connect(), so sharing an instance
+    // across concurrent requests causes "Already connected" errors.
+    const mcpServer = _createMcpServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless mode
     });
@@ -101,6 +97,8 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Internal Server Error");
       }
+    } finally {
+      await mcpServer.close();
     }
   });
 
@@ -119,9 +117,6 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
  * Stop the MCP HTTP server (graceful close, waits for in-flight requests).
  */
 export async function stopCodexMcpServer(): Promise<void> {
-  const closeMcp = _mcpServer?.close();
-  _mcpServer = null;
-
   await new Promise<void>((resolve, reject) => {
     if (!_httpServer) {
       resolve();
@@ -133,8 +128,6 @@ export async function stopCodexMcpServer(): Promise<void> {
       else resolve();
     });
   });
-
-  await closeMcp;
 }
 
 // ---------------------------------------------------------------------------
