@@ -1,5 +1,5 @@
 import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-import { getProvider } from "./providers/index.js";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { z } from "zod";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
@@ -398,6 +398,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     );
     await convex.mutation(api.usageRecords.record, {
       source: "dispatcher",
+      provider: getProviderName(),
       conversationId: opts.conversationId,
       turnId,
       model: usage.model,

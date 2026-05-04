@@ -1,4 +1,4 @@
-import { getProvider } from "./providers/index.js";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
@@ -154,6 +154,7 @@ async function recordConsolidationUsage(
   if (usage.costUsd <= 0 && usage.inputTokens <= 0) return;
   await convex.mutation(api.usageRecords.record, {
     source,
+    provider: getProviderName(),
     runId,
     model: usage.model,
     inputTokens: usage.inputTokens,

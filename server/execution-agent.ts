@@ -1,4 +1,4 @@
-import { getProvider } from "./providers/index.js";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
@@ -243,6 +243,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   if (usage.costUsd > 0 || usage.inputTokens > 0) {
     await convex.mutation(api.usageRecords.record, {
       source: "execution",
+      provider: getProviderName(),
       conversationId: opts.conversationId,
       agentId,
       model: usage.model,

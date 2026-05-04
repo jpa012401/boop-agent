@@ -1,7 +1,7 @@
 import { api } from "../../convex/_generated/api.js";
 import { convex } from "../convex-client.js";
 import { embed } from "../embeddings.js";
-import { getProvider } from "../providers/index.js";
+import { getProvider, getProviderName } from "../providers/index.js";
 import { getRuntimeModel } from "../runtime-config.js";
 import { EMPTY_USAGE, type UsageTotals } from "../usage.js";
 import { SEGMENT_DEFAULTS, makeMemoryId, type MemorySegment } from "./types.js";
@@ -76,6 +76,7 @@ export async function extractAndStore(opts: {
     if (usage.costUsd > 0 || usage.inputTokens > 0) {
       await convex.mutation(api.usageRecords.record, {
         source: "extract",
+        provider: getProviderName(),
         conversationId: opts.conversationId,
         turnId: opts.turnId,
         model: usage.model,

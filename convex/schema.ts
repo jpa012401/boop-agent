@@ -100,6 +100,7 @@ export default defineSchema({
       v.literal("consolidation-judge"),
       v.literal("proactive"),
     ),
+    provider: v.optional(v.string()),
     conversationId: v.optional(v.string()),
     turnId: v.optional(v.string()),
     agentId: v.optional(v.string()),
@@ -115,7 +116,8 @@ export default defineSchema({
   })
     .index("by_conversation", ["conversationId"])
     .index("by_agent", ["agentId"])
-    .index("by_source", ["source"]),
+    .index("by_source", ["source"])
+    .index("by_provider", ["provider"]),
 
   agentLogs: defineTable({
     agentId: v.string(),

@@ -4,7 +4,7 @@
 // → recall user preferences → cheap Haiku classifier → on important, route
 // the summary into the interaction agent as a synthetic system message so it
 // gets the same tone/spawn pipeline as a real user turn.
-import { getProvider } from "./providers/index.js";
+import { getProvider, getProviderName } from "./providers/index.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
@@ -252,6 +252,7 @@ export async function classifyEmailImportance(
   if (recordUsage && (usage.costUsd > 0 || usage.inputTokens > 0)) {
     await convex.mutation(api.usageRecords.record, {
       source: "proactive",
+      provider: getProviderName(),
       model: usage.model,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
