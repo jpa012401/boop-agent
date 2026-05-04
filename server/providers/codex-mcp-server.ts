@@ -108,6 +108,12 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
     }
   });
 
+  // Codex tool calls can involve vector search, embeddings, and sub-agent
+  // spawning which may take well over the default 2-minute Node timeout.
+  // Set a generous timeout so long-running tools don't get killed mid-flight.
+  httpServer.timeout = 5 * 60 * 1000; // 5 minutes
+  httpServer.keepAliveTimeout = 5 * 60 * 1000;
+
   _httpServer = httpServer;
 
   await new Promise<void>((resolve, reject) => {
@@ -154,13 +160,20 @@ function _mountTool(server: McpServer, tool: ToolDefinition): void {
       inputSchema: tool.schema,
     },
     async (args: Record<string, unknown>) => {
+      const start = Date.now();
       try {
         const result = await tool.handler(args);
+        const elapsed = Date.now() - start;
+        if (elapsed > 5000) {
+          console.warn(`[codex-mcp] slow tool: ${tool.name} took ${(elapsed / 1000).toFixed(1)}s`);
+        }
         const text =
           typeof result === "string" ? result : JSON.stringify(result, null, 2);
         return { content: [{ type: "text" as const, text }] };
       } catch (err) {
+        const elapsed = Date.now() - start;
         const message = err instanceof Error ? err.message : String(err);
+        console.error(`[codex-mcp] tool ${tool.name} failed after ${(elapsed / 1000).toFixed(1)}s:`, message);
         return {
           content: [{ type: "text" as const, text: `Error: ${message}` }],
           isError: true,
