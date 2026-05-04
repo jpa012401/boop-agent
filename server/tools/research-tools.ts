@@ -58,6 +58,78 @@ function contentHash(dataJson: string): string {
   return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
 }
 
+/**
+ * Read-only MCP for querying research findings. Mounted on ALL execution agents
+ * so they can answer "what did we find?" questions regardless of whether the
+ * current run is an automation.
+ */
+export function createResearchQueryMcp() {
+  return createSdkMcpServer({
+    name: "boop-research-query",
+    version: "0.1.0",
+    tools: [
+      tool(
+        "list_research_findings",
+        "List research findings saved by automations. Use this to look up previously discovered items — businesses, listings, articles, etc. Can filter by automation ID or list all.",
+        {
+          automationId: z
+            .string()
+            .optional()
+            .describe("Filter by automation ID. Omit to search across all automations."),
+          limit: z
+            .number()
+            .optional()
+            .describe("Max results to return (default 20)."),
+        },
+        async (args) => {
+          const limit = args.limit ?? 20;
+
+          if (args.automationId) {
+            const results = await convex.query(api.researchFindings.listByAutomation, {
+              automationId: args.automationId,
+              limit,
+            });
+            if (results.length === 0) {
+              return { content: [{ type: "text" as const, text: "No findings for this automation." }] };
+            }
+            const lines = results.map(
+              (r) => `• [${r.findingId}] "${r.title}" — ${r.url}\n  Data: ${r.data}`,
+            );
+            return { content: [{ type: "text" as const, text: lines.join("\n\n") }] };
+          }
+
+          // No automationId — pull from all automations
+          const autos = await convex.query(api.automations.list, { enabledOnly: false });
+          if (autos.length === 0) {
+            return { content: [{ type: "text" as const, text: "No automations found." }] };
+          }
+
+          const allLines: string[] = [];
+          for (const auto of autos) {
+            const results = await convex.query(api.researchFindings.listByAutomation, {
+              automationId: auto.automationId,
+              limit: Math.ceil(limit / autos.length) || 5,
+            });
+            for (const r of results) {
+              allLines.push(
+                `• [${r.findingId}] (${auto.name}) "${r.title}" — ${r.url}\n  Data: ${r.data}`,
+              );
+            }
+          }
+          if (allLines.length === 0) {
+            return { content: [{ type: "text" as const, text: "No research findings saved yet." }] };
+          }
+          return { content: [{ type: "text" as const, text: allLines.slice(0, limit).join("\n\n") }] };
+        },
+      ),
+    ],
+  });
+}
+
+/**
+ * Full research MCP with dedup tools. Mounted only on automation-driven
+ * execution agents that have a dataSchema.
+ */
 export function createResearchMcp(automationId: string) {
   return createSdkMcpServer({
     name: "boop-research",

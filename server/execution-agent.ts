@@ -5,7 +5,7 @@ import { broadcast } from "./broadcast.js";
 import { buildMcpServersForIntegrations, listIntegrations } from "./integrations/registry.js";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
 import { createDraftStagingMcp } from "./draft-tools.js";
-import { createResearchMcp } from "./tools/research-tools.js";
+import { createResearchMcp, createResearchQueryMcp } from "./tools/research-tools.js";
 import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel } from "./runtime-config.js";
 
@@ -138,6 +138,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   const mcpServers: Record<string, McpSdkServerConfigWithInstance> = {
     ...integrationServers,
     ...(draftServer ? { "boop-drafts": draftServer } : {}),
+    "boop-research-query": createResearchQueryMcp(),
   };
   if (opts.dataSchema && opts.automationId) {
     mcpServers["boop-research"] = createResearchMcp(opts.automationId);
