@@ -37,11 +37,16 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
   const filtered = useMemo(() => {
     if (!data) return null;
     const cutoff = cutoffDate(range);
-    const days = cutoff
-      ? data.dailyBuckets.filter((d) => d.day >= cutoff)
-      : data.dailyBuckets;
 
-    let agentCost = 0;
+    // Filter daily buckets by time range and provider.
+    // Provider buckets hold cost/token data; "_agents" buckets hold agent counts.
+    const relevantBuckets = data.dailyBuckets.filter((d) => {
+      if (cutoff && d.day < cutoff) return false;
+      if (providerFilter === "all") return true;
+      return d.provider === providerFilter || d.provider === "_agents";
+    });
+
+    let totalCost = 0;
     let inputTokens = 0;
     let outputTokens = 0;
     let agentsSpawned = 0;
@@ -50,8 +55,8 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
     let agentsCancelled = 0;
     let automationRuns = 0;
 
-    for (const d of days) {
-      agentCost += d.agentCost;
+    for (const d of relevantBuckets) {
+      totalCost += d.costUsd;
       inputTokens += d.inputTokens;
       outputTokens += d.outputTokens;
       agentsSpawned += d.agentsSpawned;
@@ -61,10 +66,25 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
       automationRuns += d.automationRuns;
     }
 
+    // Collapse per-provider buckets into per-day for charts.
+    const dayMap = new Map<string, { day: string; agentCost: number; inputTokens: number; outputTokens: number }>();
+    for (const d of relevantBuckets) {
+      if (d.provider === "_agents") continue;
+      const existing = dayMap.get(d.day);
+      if (existing) {
+        existing.agentCost += d.costUsd;
+        existing.inputTokens += d.inputTokens;
+        existing.outputTokens += d.outputTokens;
+      } else {
+        dayMap.set(d.day, { day: d.day, agentCost: d.costUsd, inputTokens: d.inputTokens, outputTokens: d.outputTokens });
+      }
+    }
+    const days = [...dayMap.values()].sort((a, b) => a.day.localeCompare(b.day));
+
     const totalTokens = inputTokens + outputTokens;
     return {
       days,
-      cost: { total: agentCost, agents: agentCost },
+      cost: { total: totalCost, agents: totalCost },
       tokens: { input: inputTokens, output: outputTokens, total: totalTokens },
       agents: {
         total: agentsSpawned,
@@ -75,7 +95,7 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
       },
       automationRuns,
     };
-  }, [data, range]);
+  }, [data, range, providerFilter]);
 
   if (!data || !filtered) {
     return (

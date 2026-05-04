@@ -23,31 +23,36 @@ export const metrics = query({
 
     const activeMem = memories.filter((m) => m.lifecycle === "active");
 
-    // Build daily buckets across all time so the chart has something to draw.
-    const buckets = new Map<
-      string,
-      {
-        day: string;
-        agentCost: number;
-        inputTokens: number;
-        outputTokens: number;
-        agentsSpawned: number;
-        agentsCompleted: number;
-        agentsFailed: number;
-        agentsCancelled: number;
-        automationRuns: number;
-      }
-    >();
+    // Build daily buckets from usageRecords (which carry the provider field)
+    // so the dashboard can filter charts by provider on the client side.
+    type DailyBucket = {
+      day: string;
+      provider: string;
+      costUsd: number;
+      inputTokens: number;
+      outputTokens: number;
+      agentsSpawned: number;
+      agentsCompleted: number;
+      agentsFailed: number;
+      agentsCancelled: number;
+      automationRuns: number;
+    };
+    const buckets = new Map<string, DailyBucket>();
 
     function keyFor(ts: number) {
       return new Date(ts).toISOString().slice(0, 10);
     }
-    function bucketFor(day: string) {
-      let b = buckets.get(day);
+    function bucketKey(day: string, provider: string) {
+      return `${day}|${provider}`;
+    }
+    function bucketFor(day: string, provider: string) {
+      const key = bucketKey(day, provider);
+      let b = buckets.get(key);
       if (!b) {
         b = {
           day,
-          agentCost: 0,
+          provider,
+          costUsd: 0,
           inputTokens: 0,
           outputTokens: 0,
           agentsSpawned: 0,
@@ -56,27 +61,38 @@ export const metrics = query({
           agentsCancelled: 0,
           automationRuns: 0,
         };
-        buckets.set(day, b);
+        buckets.set(key, b);
       }
       return b;
     }
 
+    // Usage records carry provider — use these for cost/token daily data.
+    for (const r of usageRows) {
+      const prov = r.provider ?? "unknown";
+      const b = bucketFor(keyFor(r.createdAt), prov);
+      b.costUsd += r.costUsd;
+      b.inputTokens += r.inputTokens;
+      b.outputTokens += r.outputTokens;
+    }
+
+    // Agent status counts go into every provider bucket for that day (they're
+    // provider-independent counts). We attribute them to "all" so the client
+    // can aggregate when showing unfiltered.
     for (const a of agents) {
-      const b = bucketFor(keyFor(a.startedAt));
+      const b = bucketFor(keyFor(a.startedAt), "_agents");
       b.agentsSpawned += 1;
-      b.agentCost += a.costUsd ?? 0;
-      b.inputTokens += a.inputTokens ?? 0;
-      b.outputTokens += a.outputTokens ?? 0;
       if (a.status === "completed") b.agentsCompleted += 1;
       else if (a.status === "failed") b.agentsFailed += 1;
       else if (a.status === "cancelled") b.agentsCancelled += 1;
     }
     for (const r of automationRuns) {
-      const b = bucketFor(keyFor(r.startedAt));
+      const b = bucketFor(keyFor(r.startedAt), "_agents");
       b.automationRuns += 1;
     }
 
-    const dailyBuckets = [...buckets.values()].sort((a, b) => a.day.localeCompare(b.day));
+    const dailyBuckets = [...buckets.values()].sort((a, b) =>
+      a.day.localeCompare(b.day) || a.provider.localeCompare(b.provider),
+    );
 
     // Group usage records by provider
     const byProvider: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {};
@@ -107,11 +123,11 @@ export const metrics = query({
         ).length,
       },
       cost: {
-        total: agents.reduce((s, a) => s + (a.costUsd ?? 0), 0),
+        total: usageRows.reduce((s, r) => s + r.costUsd, 0),
       },
       tokens: {
-        input: agents.reduce((s, a) => s + (a.inputTokens ?? 0), 0),
-        output: agents.reduce((s, a) => s + (a.outputTokens ?? 0), 0),
+        input: usageRows.reduce((s, r) => s + r.inputTokens, 0),
+        output: usageRows.reduce((s, r) => s + r.outputTokens, 0),
       },
       dailyBuckets,
       byProvider,
