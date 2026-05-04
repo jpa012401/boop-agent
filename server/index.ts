@@ -20,7 +20,8 @@ import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 import { getProviderName } from "./providers/index.js";
 import { startCodexMcpServer, registerToolsForCodex } from "./providers/codex-mcp-server.js";
-import { buildInteractionTools, buildExecutionTools } from "./providers/codex-tool-registry.js";
+import { interactionTools, executionTools, makeSpawnTools, defaultConversationId } from "./tools/index.js";
+import { toolSpecsToCodexDefs } from "./tools/adapters/codex.js";
 
 async function main() {
   await loadIntegrations();
@@ -29,8 +30,12 @@ async function main() {
   // connect to Boop's tools, and write a .codex/config.toml pointing at it.
   if (getProviderName() === "codex") {
     const mcpPort = parseInt(process.env.CODEX_MCP_PORT ?? "3457");
-    registerToolsForCodex(buildInteractionTools());
-    registerToolsForCodex(buildExecutionTools("", []));
+    const codexCtx = { conversationId: defaultConversationId() };
+    registerToolsForCodex(toolSpecsToCodexDefs([
+      ...interactionTools,
+      ...makeSpawnTools(),
+      ...executionTools,
+    ], codexCtx));
     await startCodexMcpServer(mcpPort);
     const codexDir = join(process.cwd(), ".codex");
     mkdirSync(codexDir, { recursive: true });

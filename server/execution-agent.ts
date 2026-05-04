@@ -4,8 +4,9 @@ import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
 import { buildMcpServersForIntegrations, listIntegrations } from "./integrations/registry.js";
 import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
-import { createDraftStagingMcp } from "./draft-tools.js";
-import { createResearchMcp, createResearchQueryMcp } from "./tools/research-tools.js";
+import { executionTools, researchDedupTools } from "./tools/index.js";
+import { draftStagingTools } from "./tools/drafts.js";
+import { toolSpecsToClaudeMcp } from "./tools/adapters/claude.js";
 import { EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel } from "./runtime-config.js";
 
@@ -132,16 +133,15 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
     opts.integrations,
     opts.conversationId,
   );
-  const draftServer = opts.conversationId
-    ? createDraftStagingMcp(opts.conversationId)
-    : undefined;
+  const execCtx = { conversationId: opts.conversationId ?? "" };
+  const execTools = [...executionTools, ...(opts.conversationId ? draftStagingTools : [])];
   const mcpServers: Record<string, McpSdkServerConfigWithInstance> = {
     ...integrationServers,
-    ...(draftServer ? { "boop-drafts": draftServer } : {}),
-    "boop-research-query": createResearchQueryMcp(),
+    "boop-exec-tools": toolSpecsToClaudeMcp("boop-exec-tools", "0.1.0", execTools, execCtx),
   };
   if (opts.dataSchema && opts.automationId) {
-    mcpServers["boop-research"] = createResearchMcp(opts.automationId);
+    const dedupCtx = { conversationId: opts.conversationId ?? "", automationId: opts.automationId };
+    mcpServers["boop-research"] = toolSpecsToClaudeMcp("boop-research", "0.1.0", researchDedupTools, dedupCtx);
   }
   const allowedTools = [
     "WebSearch",
