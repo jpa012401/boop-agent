@@ -4,6 +4,41 @@ import { convex } from "../convex-client.js";
 import { spawnExecutionAgent } from "../execution-agent.js";
 import type { ToolSpec } from "./types.js";
 
+function randomId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Execution-agent tool: stage a draft for user review. */
+export const draftStagingTools: ToolSpec[] = [
+  {
+    name: "save_draft",
+    description:
+      `Save a draft of an external action (email, calendar event, message, etc.) for the user to review.
+ALWAYS call this instead of sending or creating something directly. The user will say "send it" in the next turn to commit.
+
+- summary: one-line description the user will see.
+- payload: JSON string with everything needed to execute the draft (provider-specific fields).
+- kind: short type tag like "gmail.reply", "gmail.new", "gcal.event", "slack.message".`,
+    schema: {
+      kind: z.string(),
+      summary: z.string(),
+      payload: z.string().describe("JSON string with the data needed to execute."),
+    },
+    async handler(args, ctx) {
+      const draftId = randomId("draft");
+      await convex.mutation(api.drafts.create, {
+        draftId,
+        conversationId: ctx.conversationId,
+        kind: args.kind as string,
+        summary: args.summary as string,
+        payload: args.payload as string,
+      });
+      return `Draft saved as ${draftId}. Surface the summary to the user and ask them to confirm "send" or "cancel".`;
+    },
+  },
+];
+
+/** Interaction-agent tools: review and approve/reject drafts. */
 export const draftTools: ToolSpec[] = [
   {
     name: "list_drafts",
