@@ -3,9 +3,12 @@
  * MCP Streamable HTTP transport. Codex cannot mount in-process MCP servers
  * like the Claude Agent SDK can, so it connects to this external HTTP endpoint.
  *
- * Listens on 127.0.0.1:<port> (default 3456) and serves MCP on /mcp.
+ * Uses session-based transport: Codex's initialize request creates a session,
+ * and subsequent requests (tool calls, polling) are routed to the same
+ * McpServer instance via the Mcp-Session-Id header.
  */
 
+import crypto from "node:crypto";
 import http from "node:http";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -33,6 +36,24 @@ export interface ToolDefinition {
 let _httpServer: http.Server | null = null;
 const _registeredTools: ToolDefinition[] = [];
 
+/** Active sessions: sessionId → { server, transport } */
+const _sessions = new Map<
+  string,
+  { server: McpServer; transport: StreamableHTTPServerTransport; createdAt: number }
+>();
+
+// Clean up stale sessions every 5 minutes (sessions older than 30 min).
+const SESSION_TTL_MS = 30 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of _sessions) {
+    if (now - session.createdAt > SESSION_TTL_MS) {
+      session.server.close().catch(() => {});
+      _sessions.delete(id);
+    }
+  }
+}, 5 * 60 * 1000).unref();
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -44,16 +65,14 @@ const _registeredTools: ToolDefinition[] = [];
 export function registerToolsForCodex(tools: ToolDefinition[]): void {
   const existing = new Set(_registeredTools.map((t) => t.name));
   for (const tool of tools) {
-    if (existing.has(tool.name)) continue; // skip duplicates
+    if (existing.has(tool.name)) continue;
     _registeredTools.push(tool);
     existing.add(tool.name);
   }
 }
 
 /**
- * Create a fresh McpServer with all registered tools mounted. A new instance
- * is needed per HTTP request because McpServer.connect() binds to a single
- * transport and cannot be reused across connections.
+ * Create a fresh McpServer with all registered tools mounted.
  */
 function _createMcpServer(): McpServer {
   const server = new McpServer({
@@ -68,55 +87,75 @@ function _createMcpServer(): McpServer {
 
 /**
  * Start the MCP HTTP server.
- *
- * @param port - TCP port to listen on (default: 3456).
- * @returns A Promise that resolves once the server is listening.
  */
 export async function startCodexMcpServer(port = 3456): Promise<void> {
-  if (_httpServer) {
-    // Already running — nothing to do.
-    return;
-  }
+  if (_httpServer) return;
 
   const httpServer = http.createServer(async (req, res) => {
     const method = req.method ?? "?";
     const url = req.url ?? "?";
-    console.log(`[codex-mcp-server] ${method} ${url}`);
 
     // Only handle requests to /mcp.
     if (url !== "/mcp") {
+      // Silently 404 OAuth probes from Codex — they're expected.
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not Found");
       return;
     }
 
-    // Each request gets a fresh McpServer + transport pair. The MCP SDK binds
-    // a server to exactly one transport via connect(), so sharing an instance
-    // across concurrent requests causes "Already connected" errors.
+    // Check for existing session.
+    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+
+    if (sessionId && _sessions.has(sessionId)) {
+      // Route to existing session's transport.
+      const session = _sessions.get(sessionId)!;
+      try {
+        await session.transport.handleRequest(req, res);
+      } catch (err) {
+        console.error(`[codex-mcp-server] session ${sessionId} error:`, err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "text/plain" });
+          res.end("Internal Server Error");
+        }
+      }
+      return;
+    }
+
+    // No session — this is an initialize request. Create new session.
+    const newSessionId = crypto.randomUUID();
     const mcpServer = _createMcpServer();
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined, // stateless mode
+      sessionIdGenerator: () => newSessionId,
     });
+
+    _sessions.set(newSessionId, {
+      server: mcpServer,
+      transport,
+      createdAt: Date.now(),
+    });
+
+    // Clean up session when transport closes.
+    transport.onclose = () => {
+      _sessions.delete(newSessionId);
+      mcpServer.close().catch(() => {});
+    };
 
     try {
       await mcpServer.connect(transport);
       await transport.handleRequest(req, res);
-      console.log(`[codex-mcp-server] ${method} ${url} → ${res.statusCode}`);
+      console.log(`[codex-mcp-server] new session ${newSessionId.slice(0, 8)} (${_registeredTools.length} tools)`);
     } catch (err) {
-      console.error("[codex-mcp-server] Error handling MCP request:", err);
+      console.error("[codex-mcp-server] init error:", err);
+      _sessions.delete(newSessionId);
+      await mcpServer.close().catch(() => {});
       if (!res.headersSent) {
         res.writeHead(500, { "Content-Type": "text/plain" });
         res.end("Internal Server Error");
       }
-    } finally {
-      await mcpServer.close();
     }
   });
 
-  // Codex tool calls can involve vector search, embeddings, and sub-agent
-  // spawning which may take well over the default 2-minute Node timeout.
-  // Set a generous timeout so long-running tools don't get killed mid-flight.
-  httpServer.timeout = 5 * 60 * 1000; // 5 minutes
+  httpServer.timeout = 5 * 60 * 1000;
   httpServer.keepAliveTimeout = 5 * 60 * 1000;
 
   _httpServer = httpServer;
@@ -131,9 +170,15 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
 }
 
 /**
- * Stop the MCP HTTP server (graceful close, waits for in-flight requests).
+ * Stop the MCP HTTP server.
  */
 export async function stopCodexMcpServer(): Promise<void> {
+  // Close all active sessions.
+  for (const [id, session] of _sessions) {
+    await session.server.close().catch(() => {});
+    _sessions.delete(id);
+  }
+
   await new Promise<void>((resolve, reject) => {
     if (!_httpServer) {
       resolve();
@@ -151,12 +196,6 @@ export async function stopCodexMcpServer(): Promise<void> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Mount a single ToolDefinition onto a running McpServer instance.
- *
- * The MCP SDK expects a Zod raw shape (Record<string, ZodType>) or a
- * z.object() schema — plain JSON Schema objects are NOT accepted.
- */
 function _mountTool(server: McpServer, tool: ToolDefinition): void {
   server.registerTool(
     tool.name,
