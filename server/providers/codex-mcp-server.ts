@@ -7,6 +7,7 @@
  */
 
 import http from "node:http";
+import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
@@ -19,8 +20,8 @@ export interface ToolDefinition {
   name: string;
   /** Human-readable description sent to the LLM. */
   description: string;
-  /** JSON Schema object describing the tool's input parameters. */
-  schema: Record<string, unknown>;
+  /** Zod raw shape describing the tool's input parameters. E.g. { query: z.string() } */
+  schema: Record<string, z.ZodTypeAny>;
   /** Implementation that receives validated arguments and returns a result. */
   handler: (args: Record<string, unknown>) => Promise<unknown>;
 }
@@ -137,17 +138,15 @@ export async function stopCodexMcpServer(): Promise<void> {
 /**
  * Mount a single ToolDefinition onto a running McpServer instance.
  *
- * We use the `registerTool` API (preferred over the deprecated `tool()`)
- * and pass the JSON Schema object directly as `inputSchema`. The MCP SDK
- * accepts raw JSON Schema objects when the AnySchema overload is used.
+ * The MCP SDK expects a Zod raw shape (Record<string, ZodType>) or a
+ * z.object() schema — plain JSON Schema objects are NOT accepted.
  */
 function _mountTool(server: McpServer, tool: ToolDefinition): void {
   server.registerTool(
     tool.name,
     {
       description: tool.description,
-      // The SDK accepts a plain JSON Schema object as `inputSchema`.
-      inputSchema: tool.schema as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+      inputSchema: tool.schema,
     },
     async (args: Record<string, unknown>) => {
       try {

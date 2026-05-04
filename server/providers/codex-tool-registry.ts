@@ -10,6 +10,7 @@
  * self-config, etc.) are marked TODO and can be ported incrementally.
  */
 
+import { z } from "zod";
 import { api } from "../../convex/_generated/api.js";
 import { convex } from "../convex-client.js";
 import { embed, embeddingsAvailable } from "../embeddings.js";
@@ -63,19 +64,8 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       description:
         "Search your memories for anything relevant to the current turn. Call this early in any conversation that touches the user's preferences, projects, or past decisions.",
       schema: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Keywords or topic to search for.",
-          },
-          limit: {
-            type: "number",
-            description: "Maximum number of results to return (default 10).",
-            default: 10,
-          },
-        },
-        required: ["query"],
+        query: z.string().describe("Keywords or topic to search for."),
+        limit: z.number().optional().default(10).describe("Maximum number of results to return (default 10)."),
       },
       handler: async (args) => {
         const query = args.query as string;
@@ -136,36 +126,11 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       description:
         "Persist a fact about the user or conversation that you want available in future turns. Prefer aggressive writing — memory is cheap, forgetting is expensive. Only use for durable facts (preferences, identity, projects, relationships), NOT for transient conversational state.",
       schema: {
-        type: "object",
-        properties: {
-          content: {
-            type: "string",
-            description: "The fact to remember, in one clear sentence.",
-          },
-          segment: {
-            type: "string",
-            enum: ["identity", "preference", "relationship", "project", "knowledge", "context"],
-            description:
-              "identity: core facts about who they are. preference: how they like things done. relationship: people they know. project: ongoing work. knowledge: facts about their world. context: current situation.",
-          },
-          importance: {
-            type: "number",
-            minimum: 0,
-            maximum: 1,
-            description: "0-1; how critical to retain.",
-          },
-          tier: {
-            type: "string",
-            enum: ["short", "long", "permanent"],
-            description: "Override the default tier for this segment.",
-          },
-          supersedes: {
-            type: "array",
-            items: { type: "string" },
-            description: "memoryId(s) this replaces (will be archived).",
-          },
-        },
-        required: ["content", "segment", "importance"],
+        content: z.string().describe("The fact to remember, in one clear sentence."),
+        segment: z.enum(["identity", "preference", "relationship", "project", "knowledge", "context"]).describe("identity: core facts about who they are. preference: how they like things done. relationship: people they know. project: ongoing work. knowledge: facts about their world. context: current situation."),
+        importance: z.number().min(0).max(1).describe("0-1; how critical to retain."),
+        tier: z.enum(["short", "long", "permanent"]).optional().describe("Override the default tier for this segment."),
+        supersedes: z.array(z.string()).optional().describe("memoryId(s) this replaces (will be archived)."),
       },
       handler: async (args) => {
         const segment = args.segment as keyof typeof SEGMENT_PREFERRED_TIER;
@@ -209,24 +174,9 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       description:
         "Spawn a focused sub-agent to do real work using external tools. Returns the agent's final answer. Use for anything requiring lookups, drafting, or actions in the user's integrations.",
       schema: {
-        type: "object",
-        properties: {
-          task: {
-            type: "string",
-            description:
-              "Crisp task description — what to find/draft/do, not the raw user message.",
-          },
-          integrations: {
-            type: "array",
-            items: { type: "string" },
-            description: "Which integrations to give the agent.",
-          },
-          name: {
-            type: "string",
-            description: "Short label for the agent.",
-          },
-        },
-        required: ["task", "integrations"],
+        task: z.string().describe("Crisp task description — what to find/draft/do, not the raw user message."),
+        integrations: z.array(z.string()).describe("Which integrations to give the agent."),
+        name: z.string().optional().describe("Short label for the agent."),
       },
       handler: async (args) => {
         const res = await spawnExecutionAgent({
@@ -246,14 +196,7 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       name: "list_automations",
       description: "List all automations for this conversation.",
       schema: {
-        type: "object",
-        properties: {
-          enabledOnly: {
-            type: "boolean",
-            description: "If true, only return enabled automations.",
-            default: false,
-          },
-        },
+        enabledOnly: z.boolean().optional().default(false).describe("If true, only return enabled automations."),
       },
       handler: async (args) => {
         const enabledOnly =
@@ -282,14 +225,7 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       description:
         'Send a short acknowledgment message to the user IMMEDIATELY, before a slow operation. Use this BEFORE spawn_agent so the user knows you heard them and are working on it. Keep it to ONE short sentence (ideally under 60 chars). Examples: "On it — one sec 🔍", "Looking into it…", "Drafting now, hold tight."',
       schema: {
-        type: "object",
-        properties: {
-          message: {
-            type: "string",
-            description: "1 short sentence ack. No markdown. Emojis OK.",
-          },
-        },
-        required: ["message"],
+        message: z.string().describe("1 short sentence ack. No markdown. Emojis OK."),
       },
       handler: async (args) => {
         const text = (args.message as string).trim();
