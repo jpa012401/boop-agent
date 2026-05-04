@@ -134,10 +134,11 @@ export async function startCodexMcpServer(port = 3456): Promise<void> {
       createdAt: Date.now(),
     });
 
-    // Clean up session when transport closes.
+    // Clean up session when transport closes. Only delete the map entry —
+    // do NOT call mcpServer.close() here because close() triggers
+    // transport.close() which fires onclose again → stack overflow.
     transport.onclose = () => {
       _sessions.delete(newSessionId);
-      mcpServer.close().catch(() => {});
     };
 
     try {
