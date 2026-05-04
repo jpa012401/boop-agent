@@ -1,8 +1,9 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import { api } from "../../convex/_generated/api.js";
 import { convex } from "../convex-client.js";
 import { embed } from "../embeddings.js";
-import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "../usage.js";
+import { getProvider } from "../providers/index.js";
+import { getRuntimeModel } from "../runtime-config.js";
+import { EMPTY_USAGE, type UsageTotals } from "../usage.js";
 import { SEGMENT_DEFAULTS, makeMemoryId, type MemorySegment } from "./types.js";
 
 const EXTRACTION_PROMPT = `You are a memory-extraction subagent.
@@ -44,25 +45,31 @@ export async function extractAndStore(opts: {
   turnId: string;
 }): Promise<void> {
   const started = Date.now();
-  const requestedModel = process.env.BOOP_MODEL ?? "claude-sonnet-4-6";
+  const requestedModel = await getRuntimeModel();
   try {
     const payload = `USER: ${opts.userMessage}\n\nASSISTANT: ${opts.assistantReply}`;
     let buffer = "";
     let usage: UsageTotals = { ...EMPTY_USAGE };
-    for await (const msg of query({
-      prompt: payload,
-      options: {
-        systemPrompt: EXTRACTION_PROMPT,
-        model: requestedModel,
-        permissionMode: "bypassPermissions",
-      },
+    for await (const msg of getProvider().execute(payload, {
+      systemPrompt: EXTRACTION_PROMPT,
+      model: requestedModel,
+      mcpServers: {},
+      allowedTools: [],
+      permissionMode: "bypassPermissions",
     })) {
       if (msg.type === "assistant") {
-        for (const block of msg.message.content) {
+        for (const block of msg.content) {
           if (block.type === "text") buffer += block.text;
         }
-      } else if (msg.type === "result") {
-        usage = aggregateUsageFromResult(msg, requestedModel);
+      } else if (msg.type === "result" && msg.usage) {
+        usage = {
+          model: msg.usage.model,
+          inputTokens: msg.usage.inputTokens,
+          outputTokens: msg.usage.outputTokens,
+          cacheReadTokens: msg.usage.cacheReadTokens,
+          cacheCreationTokens: msg.usage.cacheCreationTokens,
+          costUsd: msg.usage.costUsd,
+        };
       }
     }
 
