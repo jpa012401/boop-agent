@@ -42,7 +42,12 @@ const _registeredTools: ToolDefinition[] = [];
  * `startCodexMcpServer()`.
  */
 export function registerToolsForCodex(tools: ToolDefinition[]): void {
-  _registeredTools.push(...tools);
+  const existing = new Set(_registeredTools.map((t) => t.name));
+  for (const tool of tools) {
+    if (existing.has(tool.name)) continue; // skip duplicates
+    _registeredTools.push(tool);
+    existing.add(tool.name);
+  }
 }
 
 /**
