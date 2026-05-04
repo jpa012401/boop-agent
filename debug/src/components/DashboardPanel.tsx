@@ -32,6 +32,7 @@ function fmtTokens(n: number): string {
 export function DashboardPanel({ isDark }: { isDark: boolean }) {
   const data = useQuery(api.dashboard.metrics, {});
   const [range, setRange] = useState<TimeRange>("all");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
 
   const filtered = useMemo(() => {
     if (!data) return null;
@@ -116,6 +117,21 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
         >
           Overview
         </h2>
+        <div className="flex items-center gap-2">
+          <select
+            value={providerFilter}
+            onChange={(e) => setProviderFilter(e.target.value)}
+            className={`text-xs rounded-md px-2.5 py-1.5 focus:outline-none border ${
+              isDark
+                ? "bg-slate-800 border-slate-700 text-slate-300"
+                : "bg-white border-slate-200 text-slate-700"
+            }`}
+          >
+            <option value="all">All providers</option>
+            {Object.keys(data?.byProvider ?? {}).sort().map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
         <div
           className={`flex items-center rounded-lg border text-xs ${
             isDark
@@ -142,6 +158,7 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
               {r.label}
             </button>
           ))}
+        </div>
         </div>
       </div>
 
@@ -301,6 +318,29 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
           </div>
         </div>
       </div>
+
+      {data.byProvider && Object.keys(data.byProvider).length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className={`rounded-xl border p-4 ${c.chart}`}>
+            <h3 className={`text-xs font-semibold uppercase tracking-wider mb-3 ${c.label}`}>
+              Provider Breakdown
+            </h3>
+            <div className="space-y-2">
+              {Object.entries(data.byProvider).map(([provider, stats]) => (
+                <BarRow
+                  key={provider}
+                  label={provider}
+                  value={stats.costUsd}
+                  total={data.byProvider ? Object.values(data.byProvider).reduce((s, p) => s + p.costUsd, 0) : 1}
+                  color={provider === "claude" ? (isDark ? "bg-sky-500" : "bg-sky-600") : (isDark ? "bg-amber-500" : "bg-amber-600")}
+                  isDark={isDark}
+                  format={(v) => `$${v.toFixed(2)}`}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

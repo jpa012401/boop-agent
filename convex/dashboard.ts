@@ -8,11 +8,12 @@ const METRICS_SCAN_LIMIT = 5000;
 export const metrics = query({
   args: {},
   handler: async (ctx) => {
-    const [messages, memories, agents, automationRuns] = await Promise.all([
+    const [messages, memories, agents, automationRuns, usageRows] = await Promise.all([
       ctx.db.query("messages").order("desc").take(METRICS_SCAN_LIMIT),
       ctx.db.query("memoryRecords").order("desc").take(METRICS_SCAN_LIMIT),
       ctx.db.query("executionAgents").order("desc").take(METRICS_SCAN_LIMIT),
       ctx.db.query("automationRuns").order("desc").take(METRICS_SCAN_LIMIT),
+      ctx.db.query("usageRecords").order("desc").take(METRICS_SCAN_LIMIT),
     ]);
     const truncated =
       messages.length === METRICS_SCAN_LIMIT ||
@@ -77,6 +78,17 @@ export const metrics = query({
 
     const dailyBuckets = [...buckets.values()].sort((a, b) => a.day.localeCompare(b.day));
 
+    // Group usage records by provider
+    const byProvider: Record<string, { costUsd: number; inputTokens: number; outputTokens: number; count: number }> = {};
+    for (const r of usageRows) {
+      const prov = r.provider ?? "unknown";
+      const bucket = (byProvider[prov] ??= { costUsd: 0, inputTokens: 0, outputTokens: 0, count: 0 });
+      bucket.costUsd += r.costUsd;
+      bucket.inputTokens += r.inputTokens;
+      bucket.outputTokens += r.outputTokens;
+      bucket.count += 1;
+    }
+
     return {
       messages: messages.length,
       memories: {
@@ -102,6 +114,7 @@ export const metrics = query({
         output: agents.reduce((s, a) => s + (a.outputTokens ?? 0), 0),
       },
       dailyBuckets,
+      byProvider,
       truncated,
       scanLimit: METRICS_SCAN_LIMIT,
     };
