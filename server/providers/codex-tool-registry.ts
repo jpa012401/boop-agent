@@ -13,9 +13,30 @@
 import { z } from "zod";
 import { api } from "../../convex/_generated/api.js";
 import { convex } from "../convex-client.js";
+import {
+  CURATED_TOOLKITS,
+  listConnectedToolkits,
+  listToolkitMeta,
+  listToolsForToolkit,
+} from "../composio.js";
 import { embed, embeddingsAvailable } from "../embeddings.js";
-import { spawnExecutionAgent } from "../execution-agent.js";
+import { availableIntegrations, spawnExecutionAgent } from "../execution-agent.js";
+import { activeProvider as activeEmbeddingProvider } from "../embeddings.js";
 import { DEFAULT_DECAY, SEGMENT_PREFERRED_TIER, makeMemoryId } from "../memory/types.js";
+import { nextRunFor, validateSchedule } from "../automations.js";
+import {
+  PROVIDER_MODELS,
+  PROVIDER_MODEL_ALIASES,
+  getRuntimeModel,
+  resolveModelInput,
+  setRuntimeModel,
+} from "../runtime-config.js";
+import { getProviderName } from "./index.js";
+import {
+  describeUserNow,
+  resolveTimezoneInput,
+  setUserTimezone,
+} from "../timezone-config.js";
 import type { ToolDefinition } from "./codex-mcp-server.js";
 
 // ---------------------------------------------------------------------------
@@ -245,18 +266,289 @@ export function buildInteractionTools(conversationId?: string): ToolDefinition[]
       },
     },
 
-    // TODO: create_automation — needs describeUserNow, validateSchedule, nextRunFor
-    // TODO: toggle_automation — calls api.automations.setEnabled
-    // TODO: delete_automation — calls api.automations.remove
-    // TODO: list_drafts       — calls api.drafts.pendingByConversation
-    // TODO: send_draft        — calls api.drafts.setStatus + spawnExecutionAgent
-    // TODO: reject_draft      — calls api.drafts.setStatus
-    // TODO: get_config        — reads runtime model, timezone, integrations
-    // TODO: set_model         — calls setRuntimeModel
-    // TODO: set_timezone      — calls setUserTimezone
-    // TODO: list_integrations — calls listConnectedToolkits
-    // TODO: search_composio_catalog — calls listToolkitMeta
-    // TODO: inspect_toolkit   — calls listToolkitMeta + listToolsForToolkit
+    // -------------------------------------------------------------------------
+    // create_automation
+    // -------------------------------------------------------------------------
+    {
+      name: "create_automation",
+      description:
+        "Schedule a recurring task. Cron expressions use 5 fields (min hour dom month dow). Write times in the user's LOCAL clock — the runner attaches the stored timezone automatically.",
+      schema: {
+        name: z.string().describe("Short label, e.g. 'morning email digest'."),
+        schedule: z.string().describe("Cron expression (5 fields)."),
+        task: z.string().describe("Specific task for the sub-agent."),
+        integrations: z.array(z.string()).optional().default([]).describe("Integration names the sub-agent needs."),
+        notify: z.boolean().optional().default(true).describe("Send result to this conversation when it runs."),
+        dataSchema: z.string().optional().describe("JSON string defining schema for structured research findings."),
+      },
+      handler: async (args) => {
+        const tzInfo = await describeUserNow();
+        const timezone = tzInfo.timezone;
+        const validation = validateSchedule(args.schedule as string, timezone);
+        if (!validation.valid) return `Invalid cron expression: ${validation.error}`;
+        const automationId = randomId("auto");
+        const nextRunAt = nextRunFor(args.schedule as string, timezone) ?? undefined;
+        await convex.mutation(api.automations.create, {
+          automationId,
+          name: args.name as string,
+          task: args.task as string,
+          integrations: (args.integrations as string[]) ?? [],
+          schedule: args.schedule as string,
+          timezone,
+          conversationId: convId,
+          notifyConversationId: args.notify ? convId : undefined,
+          nextRunAt,
+          dataSchema: args.dataSchema as string | undefined,
+        });
+        const nextStr = nextRunAt
+          ? new Intl.DateTimeFormat("en-US", {
+              timeZone: timezone, weekday: "short", month: "short", day: "numeric",
+              hour: "numeric", minute: "2-digit", timeZoneName: "short",
+            }).format(new Date(nextRunAt))
+          : "unknown";
+        return `Created automation ${automationId} "${args.name}" — next run: ${nextStr} (timezone: ${timezone}).`;
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // toggle_automation
+    // -------------------------------------------------------------------------
+    {
+      name: "toggle_automation",
+      description: "Enable or disable an automation by id.",
+      schema: {
+        automationId: z.string(),
+        enabled: z.boolean(),
+      },
+      handler: async (args) => {
+        const id = await convex.mutation(api.automations.setEnabled, {
+          automationId: args.automationId as string,
+          enabled: args.enabled as boolean,
+        });
+        return id ? `Set ${args.automationId} enabled=${args.enabled}.` : "Not found.";
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // delete_automation
+    // -------------------------------------------------------------------------
+    {
+      name: "delete_automation",
+      description: "Permanently remove an automation.",
+      schema: { automationId: z.string() },
+      handler: async (args) => {
+        const id = await convex.mutation(api.automations.remove, {
+          automationId: args.automationId as string,
+        });
+        return id ? `Deleted ${args.automationId}.` : "Not found.";
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // list_drafts
+    // -------------------------------------------------------------------------
+    {
+      name: "list_drafts",
+      description: "List pending drafts in this conversation.",
+      schema: {},
+      handler: async () => {
+        const drafts = await convex.query(api.drafts.pendingByConversation, {
+          conversationId: convId,
+        });
+        if (drafts.length === 0) return "No pending drafts.";
+        return drafts.map((d: Record<string, unknown>) =>
+          `• [${d.draftId}] (${d.kind}) ${d.summary}`,
+        ).join("\n");
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // send_draft
+    // -------------------------------------------------------------------------
+    {
+      name: "send_draft",
+      description: "Approve and execute a draft. Spawns an execution agent to perform the action.",
+      schema: {
+        draftId: z.string(),
+        integrations: z.array(z.string()).describe("Which integrations the execution agent needs."),
+      },
+      handler: async (args) => {
+        const draft = await convex.query(api.drafts.get, { draftId: args.draftId as string });
+        if (!draft || (draft as Record<string, unknown>).status !== "pending") {
+          return `Draft ${args.draftId} not found or already decided.`;
+        }
+        await convex.mutation(api.drafts.setStatus, {
+          draftId: args.draftId as string,
+          status: "sent",
+        });
+        const d = draft as Record<string, unknown>;
+        const task = `Execute this approved draft. Use the matching integration tool to actually send/create it.\nkind: ${d.kind}\nsummary: ${d.summary}\npayload JSON: ${d.payload}`;
+        const res = await spawnExecutionAgent({
+          task,
+          integrations: args.integrations as string[],
+          conversationId: convId,
+          name: `send:${d.kind}`,
+        });
+        return `Draft ${args.draftId} executed.\n\n${res.result}`;
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // reject_draft
+    // -------------------------------------------------------------------------
+    {
+      name: "reject_draft",
+      description: "Cancel a pending draft.",
+      schema: { draftId: z.string() },
+      handler: async (args) => {
+        await convex.mutation(api.drafts.setStatus, {
+          draftId: args.draftId as string,
+          status: "rejected",
+        });
+        return `Draft ${args.draftId} rejected.`;
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // get_config
+    // -------------------------------------------------------------------------
+    {
+      name: "get_config",
+      description: "Return Boop's runtime configuration: model, timezone, integrations, env info.",
+      schema: {},
+      handler: async () => {
+        const integrations = availableIntegrations();
+        const tzInfo = await describeUserNow();
+        return JSON.stringify({
+          provider: getProviderName(),
+          model: await getRuntimeModel(),
+          availableModels: [...(PROVIDER_MODELS[getProviderName()] ?? [])],
+          userTimezone: tzInfo.isExplicit ? tzInfo.timezone : null,
+          currentLocalTime: tzInfo.now,
+          integrationsLoaded: integrations,
+          composioEnabled: Boolean(process.env.COMPOSIO_API_KEY),
+          embeddingsProvider: activeEmbeddingProvider(),
+          telegramEnabled: Boolean(process.env.TELEGRAM_BOT_TOKEN),
+        }, null, 2);
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // set_model
+    // -------------------------------------------------------------------------
+    {
+      name: "set_model",
+      description: "Switch the model used for the next turn. Accepts canonical ID or alias.",
+      schema: {
+        model: z.string().describe("Model canonical ID or alias."),
+      },
+      handler: async (args) => {
+        const resolved = resolveModelInput(args.model as string);
+        if (!resolved) {
+          return `Unknown model "${args.model}". Try one of: ${[...(PROVIDER_MODELS[getProviderName()] ?? [])].join(", ")} or aliases ${Object.keys(PROVIDER_MODEL_ALIASES[getProviderName()] ?? {}).join(", ")}.`;
+        }
+        await setRuntimeModel(resolved);
+        return `Model set to ${resolved}. Takes effect next turn.`;
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // set_timezone
+    // -------------------------------------------------------------------------
+    {
+      name: "set_timezone",
+      description: 'Save the user\'s timezone. Accepts IANA ID or alias ("central", "PT", "Dallas", etc.).',
+      schema: {
+        timezone: z.string().describe("IANA timezone or friendly alias."),
+      },
+      handler: async (args) => {
+        const resolved = resolveTimezoneInput(args.timezone as string);
+        if (!resolved) {
+          return `"${args.timezone}" isn't a recognized timezone. Use IANA format like "America/Chicago" or an alias like "central".`;
+        }
+        await setUserTimezone(resolved);
+        const tzInfo = await describeUserNow();
+        return `Timezone set to ${resolved}. Local time: ${tzInfo.now}.`;
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // list_integrations
+    // -------------------------------------------------------------------------
+    {
+      name: "list_integrations",
+      description: "List currently connected integrations (Gmail, Slack, etc.) with account details.",
+      schema: {},
+      handler: async () => {
+        const connected = await listConnectedToolkits();
+        if (connected.length === 0) return "No integrations connected.";
+        return JSON.stringify(connected.map((c) => ({
+          slug: c.slug,
+          status: c.status,
+          account: c.accountLabel ?? c.accountEmail ?? c.alias ?? "(unknown)",
+          connectionId: c.connectionId,
+        })), null, 2);
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // search_composio_catalog
+    // -------------------------------------------------------------------------
+    {
+      name: "search_composio_catalog",
+      description: "Search Composio's toolkit catalog (1000+ services) by keyword.",
+      schema: {
+        query: z.string().describe("Keyword to search."),
+        limit: z.number().optional().default(15).describe("Max results."),
+      },
+      handler: async (args) => {
+        const meta = await listToolkitMeta();
+        const q = (args.query as string).trim().toLowerCase();
+        const limit = (args.limit as number) ?? 15;
+        const matches: Array<{ slug: string; name: string; description?: string }> = [];
+        for (const t of meta.values()) {
+          if (`${t.slug} ${t.name} ${t.description ?? ""}`.toLowerCase().includes(q)) {
+            matches.push({ slug: t.slug, name: t.name, description: t.description });
+          }
+          if (matches.length >= limit) break;
+        }
+        return matches.length === 0
+          ? `No toolkits match "${args.query}".`
+          : JSON.stringify(matches, null, 2);
+      },
+    },
+
+    // -------------------------------------------------------------------------
+    // inspect_toolkit
+    // -------------------------------------------------------------------------
+    {
+      name: "inspect_toolkit",
+      description: "Look up a specific Composio toolkit by slug. Shows status, connections, and optionally its tools.",
+      schema: {
+        slug: z.string().describe("Toolkit slug, e.g. 'gmail', 'slack'."),
+        includeTools: z.boolean().optional().default(false).describe("If true, fetch tool list (slower)."),
+      },
+      handler: async (args) => {
+        const lower = (args.slug as string).trim().toLowerCase();
+        const meta = await listToolkitMeta();
+        const toolkit = meta.get(lower);
+        if (!toolkit) return `Toolkit "${lower}" not in catalog. Try search_composio_catalog.`;
+        const connected = (await listConnectedToolkits()).filter((c) => c.slug === lower);
+        const curated = CURATED_TOOLKITS.find((t) => t.slug === lower);
+        const result: Record<string, unknown> = {
+          slug: toolkit.slug, name: toolkit.name, description: toolkit.description,
+          toolsCount: toolkit.toolsCount, inCuratedList: Boolean(curated),
+          connections: connected.map((c) => ({
+            status: c.status, account: c.accountLabel ?? c.accountEmail ?? "(unknown)", id: c.connectionId,
+          })),
+          availableForSpawn: availableIntegrations().includes(lower),
+        };
+        if (args.includeTools) {
+          result.tools = await listToolsForToolkit(lower);
+        }
+        return JSON.stringify(result, null, 2);
+      },
+    }
   ];
 }
 
