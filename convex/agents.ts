@@ -88,6 +88,27 @@ export const list = query({
   },
 });
 
+export const remove = mutation({
+  args: { agentId: v.string() },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db
+      .query("executionAgents")
+      .withIndex("by_agent_id", (q) => q.eq("agentId", args.agentId))
+      .unique();
+    if (!agent) return null;
+    // Delete associated logs too.
+    const logs = await ctx.db
+      .query("agentLogs")
+      .withIndex("by_agent", (q) => q.eq("agentId", args.agentId))
+      .collect();
+    for (const log of logs) {
+      await ctx.db.delete(log._id);
+    }
+    await ctx.db.delete(agent._id);
+    return agent._id;
+  },
+});
+
 export const get = query({
   args: { agentId: v.string() },
   handler: async (ctx, args) => {

@@ -1,5 +1,5 @@
 /**
- * Cancel all agents stuck in "running" or "spawned" status.
+ * Delete all agents stuck in "running" or "spawned" status.
  * These are stale from server restarts — the actual process is gone.
  *
  * Usage: tsx scripts/cancel-stale-agents.ts
@@ -29,13 +29,9 @@ async function main() {
   console.log(`Found ${stale.length} stale agent(s):`);
   for (const a of stale) {
     console.log(`  ${a.agentId} — "${a.name}" (${a.status} since ${new Date(a.startedAt).toISOString()})`);
-    await convex.mutation(api.agents.update, {
-      agentId: a.agentId,
-      status: "cancelled",
-      error: "Cancelled: stale from server restart",
-    });
+    await convex.mutation(api.agents.remove, { agentId: a.agentId });
   }
-  console.log(`Cancelled ${stale.length} stale agent(s).`);
+  console.log(`Deleted ${stale.length} stale agent(s) and their logs.`);
 }
 
 main().catch(console.error);
