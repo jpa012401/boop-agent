@@ -25,6 +25,7 @@ export const interactionTools: ToolSpec[] = [
   ...selfConfigTools,
   ...integrationTools,
   ...commsTools,
+  ...researchQueryTools,
 ];
 
 /** Execution-layer tools (read-only data access). */
