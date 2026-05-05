@@ -90,7 +90,7 @@ export const metrics = query({
       b.automationRuns += 1;
     }
 
-    const dailyBuckets = [...buckets.values()].sort((a, b) =>
+    const dailyBuckets = Array.from(buckets.values()).sort((a, b) =>
       a.day.localeCompare(b.day) || a.provider.localeCompare(b.provider),
     );
 
